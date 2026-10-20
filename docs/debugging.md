@@ -100,3 +100,7 @@ client.log：复现后的相关片段，保留完整错误栈
 ## 6. 可选进阶：断点
 
 先掌握上述操作即可。阅读 technical-design.md 的代码职责后，可以在 Spawn、PreUpdatePlayers、Remove 设置断点，用支持 C# 的 IDE 附加到测试用 dotnet 游戏进程。当前没有交付经过实测的 IDE 调试配置，不把它写成已验证操作。更新函数断点会频繁暂停游戏，定位后及时取消。
+
+## 0.1.1：批量测试入口
+
+现在可以使用 scripts/smoke-test.ps1 自动检查角色控制；具体操作与原生 Enter 对照见 testing.md。脚本预留 3 秒切回游戏。测试游戏须保持前台；单人失焦会原生暂停，不能把后台超时当作角色失败。普通角色测试不再依赖聊天框或 Computer Use 按键。

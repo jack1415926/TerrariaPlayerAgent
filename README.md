@@ -2,7 +2,7 @@
 
 在 Terraria / tModLoader 中开发具有独立生命、物品和装备的 AI 队友，最终尝试合作推进至月亮领主。
 
-当前版本 **0.1.0：独立玩家移动演示**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。暂未接入 LLM。
+当前版本 **0.1.1：独立玩家移动演示与本地自动测试**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。暂未接入 LLM。
 
 ## 快速开始
 
@@ -31,6 +31,12 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 一条一条执行。新动作替换旧动作；左右移动默认 2 秒，最多 10 秒模拟时间。status 可查看双方槽位、位置、生命及每次更新的调用次数。
 
 所有本地开发数据位于 `.local/tModLoader`，被 Git 忽略。源码只在本仓库维护，不复制到 ModSources。现有 Steam 云存档仍可能显示，测试请只使用新建的本地存档。
+
+## 自动测试
+
+进入专用测试世界后运行 `.\scripts\smoke-test.ps1`，按提示在 3 秒内切回游戏。测试会自动执行动作并输出 JSON 报告。AI 调用时可保持游戏前台并传入 `-FocusDelaySeconds 0`，无需逐步截图。
+
+详见 [本地测试与 Enter 诊断](docs/testing.md)。历史命令回填小模组及测试辅助模组见 [待办](TODO.md)。
 
 ## 验证与限制
 

@@ -1,5 +1,5 @@
 displayName = Terraria Player Agent - Demo
 author = TerrariaPlayerAgent contributors
-version = 0.1.0
+version = 0.1.1
 side = Both
 buildIgnore = .git/*, .local/*, docs/*, scripts/*, bin/*, obj/*, *.csproj, global.json, README.md

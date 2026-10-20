@@ -7,4 +7,4 @@ if (-not (Test-Path -LiteralPath $modFile)) { throw 'Build first: ./scripts/buil
 # Only this project's isolated profile is configured. Existing mod lists and saves are untouched.
 Set-Content -LiteralPath (Join-Path $profile 'Mods\enabled.json') -Value '["TerrariaPlayerAgent"]' -Encoding utf8
 Start-Process -FilePath (Join-Path $TmlPath 'dotnet\dotnet.exe') -WorkingDirectory $TmlPath `
-    -ArgumentList @('tModLoader.dll', '-tmlsavedirectory', ('"' + $profile + '"')) -WindowStyle Hidden
+    -ArgumentList @('tModLoader.dll', '-tmlsavedirectory', ('"' + $profile + '"'), '-tpatest') -WindowStyle Hidden

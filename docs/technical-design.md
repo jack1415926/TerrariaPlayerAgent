@@ -49,3 +49,7 @@
 对本机 `tModLoader.dll`（Terraria 1.4.4.9 / tML 2026.08.3.0）只读查看：Main.DoUpdateInWorld 遍历活动玩家槽位调用 Player.Update；Main.RefreshPlayerDrawOrder 收集额外玩家；Player.Update 的人类输入读取限于本地玩家路径。构建目标指定 net8.0 和 C# 12。
 
 反编译输出仅留在临时调查目录，不提交游戏源码或二进制。本项目没有复制 TerraGuardians、TerraBlind 或 MoreAIPlayer 的代码和资源；自己的新增代码使用 MIT。
+
+## 0.1.1 测试入口补充
+
+新增只在 -tpatest 开发启动参数下启用的 JSON 文件测试入口；复用 DemoCommand.Action 和原有控制层，不开网络端口。附带可关闭的 Enter 事件诊断，以及游戏内部的 SDL Enter 对照。具体协议、前台运行限制、自动测试步骤和故障证据见 testing.md。原有角色更新实现未改为手动 Update。

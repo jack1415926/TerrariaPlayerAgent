@@ -151,6 +151,17 @@ public sealed class DemoPlayerSystem : ModSystem
 
     public override void PostUpdatePlayers() => lastUpdates = updatesThisTick;
 
+    internal object? Snapshot() => Actor == null ? null : new
+    {
+        slot = Actor.whoAmI,
+        x = Actor.position.X, y = Actor.position.Y,
+        velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
+        life = Actor.statLife, dead = Actor.dead,
+        moveTicks, jumpTicks,
+        left = Actor.controlLeft, right = Actor.controlRight, jumping = Actor.controlJump,
+        updatesPerTick = lastUpdates, totalUpdates
+    };
+
     internal string Status(Player owner)
     {
         if (Actor == null)
