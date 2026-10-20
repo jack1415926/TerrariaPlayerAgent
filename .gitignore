@@ -24,3 +24,6 @@ Logs/
 *.wld.bak
 *.plr
 *.plr.bak
+
+# Isolated development profile (logs, mods and test saves)
+.local/

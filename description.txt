@@ -1,0 +1,2 @@
+Single-player technical demo: an independent Player controlled with /tpa commands.
+Movement prototype only. Combat, persistence and multiplayer are not supported yet.

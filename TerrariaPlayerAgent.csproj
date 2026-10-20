@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <TmlInstallPath Condition="'$(TmlInstallPath)' == ''">$(TML_PATH)</TmlInstallPath>
+    <ExtraBuildModFlags>-tmlsavedirectory &quot;$(MSBuildProjectDirectory)/.local/tModLoader&quot;</ExtraBuildModFlags>
+  </PropertyGroup>
+  <Import Project="$(TmlInstallPath)/tMLMod.targets" />
+</Project>

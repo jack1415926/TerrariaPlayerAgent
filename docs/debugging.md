@@ -1,109 +1,102 @@
-# 人工调试指南
+# 人工构建、演示与调试
 
-更新：2026-10-20。当前是编码前的操作基础，尚无可运行模组；标为“交付时补齐”的项目不能当作现成命令执行。
+更新：2026-10-21。编译、打包、游戏加载已验证；角色动作的游戏内结果见 validation.md，未测项不视为通过。
 
-目标：你能够自己完成一次构建、运行、复现、收集日志和反馈，不需要先读懂整个游戏引擎。
+## 1. 从哪里开始
 
-## 1. 先认识三个位置
+- 项目：`F:\codex_project\TerrariaPlayerAgent`。
+- 本机 tModLoader：`F:\SteamLibrary\steamapps\common\tModLoader`，本轮使用版本 2026.08.3.0 / Terraria 1.4.4.9。
+- 本机 .NET SDK：8.0.426，仓库 global.json 选用 .NET 8。
+- 测试配置：项目下 `.local\tModLoader`。此目录被 Git 忽略，包含本项目模组、测试角色和世界。
 
-| 位置 | 用途 |
-| --- | --- |
-| `F:\codex_project\TerrariaPlayerAgent` | 本项目源码和文档，修改代码与查看 Git 都在这里 |
-| `F:\SteamLibrary\steamapps\common\tModLoader` | 本机游戏安装目录；不是项目源码目录 |
-| `C:\Users\ROG\Documents\My Games\Terraria\tModLoader` | 本机游戏用户数据，包含 Mods、ModSources、Players、Worlds |
+源码始终以 F 盘 Git 仓库为准，不再复制到游戏的 ModSources。现在使用以下脚本构建，不使用游戏菜单对另一份源码构建。
 
-以上位置已在本机检查存在；用户数据路径按本机 Documents 位置解析，其他电脑可能不同。公开文档中的路径仅作示例，不要求别人使用同一盘符。
+## 2. 构建和启动
 
-游戏内“打开源码 / Open Sources”能定位 ModSources。F 盘仓库如何提供给游戏构建，目前未配置；交付时必须给出实际源码路径和唯一操作步骤，避免两份副本改错位置。
-
-## 2. 第一次准备
-
-1. 从 Steam 启动 tModLoader，在主菜单记录版本；当前安装 DLL 的产品版本包含 `2026.08.3.0 stable`，启动后需再次核对。
-2. 新建专用测试角色和普通测试世界，使用地表平整区域，不用主力存档。
-3. 记录当前启用模组，再将测试环境收敛为本项目和必要依赖；通过后再分批增加其他模组。
-4. 将你的游戏数据、备份与日志留在仓库外。测试记录只写必要信息，不上传私人存档或密钥。
-
-## 3. 构建与重新加载
-
-官方通用入口：主菜单 → 创意工坊（Workshop）→ 开发模组（Develop Mods）→ 找到目标模组 → 构建并重新加载（Build + Reload）。中文菜单名称可能因本地化不同略有区别。
-
-该入口需要源码已正确放置、SDK 和构建配置可用，**当前项目还不具备这些条件**。如果目标条目不存在，先核对源码位置，不反复点击构建。
-
-每次修改之后：保存文件 → 退出测试世界回主菜单 → 构建并重新加载 → 检查成功提示与模组启用状态 → 重新进入世界测试。第一阶段统一采用这个流程，减少旧代码与新代码混淆。
-
-构建失败时记录第一个错误的完整文字、错误代码、文件与行号。后面的错误可能是连带结果，先定位第一处。构建成功只表示能编译，仍需游戏内验收。
-
-来源：[tModLoader 官方基础模组指南](https://github.com/tModLoader/tModLoader/wiki/Basic-tModLoader-Modding-Guide)。本项目实际构建和部署过程仍待首次实现时验证。
-
-## 4. 运行和观察
-
-原型交付后，按 manual-tests.md 顺序操作。每次只测试一个动作，记下输入与结果。
-
-区分三个现象：
-
-- 构建错误：尚未运行，需要检查代码和环境。
-- 运行异常：游戏弹错误或日志出现异常，需要保留完整调用栈。
-- 行为错误：没有异常，但角色不出现、移动不对、停不下来或抢占人类输入，同样是失败。
-
-停止应清除控制意图，角色仍会受重力和惯性影响。跳起后不会悬在半空，不能据此认定停止失败。先在平地观察是否仍持续加速或持续跳跃。
-
-## 5. 收集日志
-
-已确认本机日志目录：`F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs`。
-
-- `client.log`：优先查看模组加载、游戏运行与异常。
-- `Launch.log`：游戏启动失败时一起查看。
-- `environment-client.log`：环境问题需要时补充。
-
-本轮发现的现有日志来自旧会话，不能拿它们当本项目测试结果。复现前后检查文件修改时间；重启和重载可能轮换日志，先复制本次日志到仓库外的独立记录目录。
-
-最简单的操作：资源管理器打开日志目录 → 按修改时间排序 → 复现问题 → 用记事本打开最新 client.log。搜索 `Error`、`Exception` 和项目名，同时保留前后上下文；只截最后一行通常不够。
-
-可选 PowerShell 命令（只读，不修改游戏）：
+打开 PowerShell 7，执行：
 
 ```powershell
-# 看末尾 100 行；文件不存在会明确报错。
-Get-Content -LiteralPath 'F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs\client.log' -Tail 100
-
-# 持续观察；按 Ctrl+C 停止查看，不会关闭游戏。
-Get-Content -LiteralPath 'F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs\client.log' -Tail 30 -Wait
+Set-Location 'F:\codex_project\TerrariaPlayerAgent'
+.\scripts\build.ps1
+.\scripts\play.ps1
 ```
 
-没有异常日志不代表功能正常，必须保留实际行为和复现步骤。分享日志前检查账户名、私人路径、服务器地址及令牌，只遮盖敏感内容，不删掉错误栈。
+build.ps1 编译并打包，看到“0 个错误”和 Packaging 完成才算构建成功。产物为 `.local\tModLoader\Mods\TerrariaPlayerAgent.tmod`。
 
-## 6. 报告问题的模板
+play.ps1 只把本项目写入独立配置的 enabled.json，再启动游戏。不会替换原有本地配置里的模组列表。首次启动需要选择语言，新建测试角色和普通小世界。
+
+若换电脑或游戏安装位置，两个脚本均支持指定路径：
+
+```powershell
+.\scripts\build.ps1 -TmlPath 'D:\SteamLibrary\steamapps\common\tModLoader'
+.\scripts\play.ps1 -TmlPath 'D:\SteamLibrary\steamapps\common\tModLoader'
+```
+
+Steam 云存档仍可能在列表中显示，测试时只使用新建的本地测试角色和世界，不导入或选择主力存档。退出开发配置后，从 Steam 正常启动会回到原有本地配置。
+
+首次实测创建了本地角色 `t` 和普通小世界“放松苔原”，种子 `2118482098`，均属于项目独立配置。
+
+修改代码后，最简单可靠的流程：在测试游戏中保存退出，关闭该游戏窗口 → 保存源码 → 重新运行 build.ps1 → play.ps1。不要在旧游戏仍运行时反复启动新窗口，也不要以旧进程画面判断新代码是否生效。
+
+## 3. 两分钟演示
+
+进入测试世界，在平整地表按 Enter 打开聊天框，输入一条命令后按 Enter 执行，完成一项再做下一项：
+
+| 命令 | 预期 |
+| --- | --- |
+| `/tpa spawn` | 身边生成蓝色上衣角色 Agent Demo；重复生成只提示已存在 |
+| `/tpa status` | AI 与 human 槽位不同，sameObject=False；正常 updates/tick=1 |
+| `/tpa right 2` | 向右移动约 2 秒模拟时间后松开输入 |
+| `/tpa left 2` | 向左移动，遇到墙不会穿过 |
+| `/tpa jump` | 原地跳跃后落地，不持续连跳；站在地面时执行 |
+| `/tpa right 10`，随后 `/tpa stop` | 立即取消持续输入，允许正常惯性和下落 |
+| `/tpa remove` | 移除角色；再次移除安全，再次 spawn 可重建 |
+
+left/right 不填时长默认 2 秒；允许大于 0、最多 10 秒，小数使用英文点。新动作替换旧动作，不排队。跳跃会替换移动。无角色时提示先生成；死亡角色本批不负责复活，需要 remove 后重新 spawn。
+
+确认输入法处于英文状态。普通方向键/WASD和空格仍然只控制你自己的角色。AI 不会跟随你，离开镜头后需要回去查看，或 remove 后重新 spawn。
+
+停止后再次 status 应显示 moveTicks=0、jumpTicks=0。按 manual-tests.md 完成其余检查。
+
+## 4. 日志和常见问题
+
+本机日志目录：`F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs`。运行参数隔离了存档配置，但日志仍在这个安装目录；独立配置中的 Logs.lnk 也可用于定位。
+
+优先查看 client.log，搜索 `[TPA]`、`TerrariaPlayerAgent`、`Error`、`Exception`。生成和移除会记录槽位及累计更新数。每次查询 status 的完整结果也显示在游戏聊天里，可截图保留。
+
+```powershell
+Get-Content -LiteralPath 'F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs\client.log' -Tail 100
+```
+
+启动失败时另看 Launch.log 和 environment-client.log。它们可能被下一次启动覆盖，复现后及时在仓库外复制保留。
+
+| 现象 | 首先检查 |
+| --- | --- |
+| dotnet 命令不存在或 SDK 版本不匹配 | PowerShell 执行 `dotnet --list-sdks`，确认已装 .NET 8 SDK；只有运行时不能编译 |
+| 找不到 tModLoader | 给脚本传入正确 -TmlPath，不把 Terraria 原版目录当 tML 目录 |
+| 游戏提示未知命令 | 是否用 play.ps1 启动，是否加载 Terraria Player Agent - Demo |
+| 角色不出现 | 记录 spawn 的回复；移到开阔地重试；status 检查对象是否存在 |
+| 角色不移动 | 检查剩余 ticks、是否撞墙或已死亡；连续两次 status 比较位置与 total |
+| updates/tick 不是 1 | 保留状态与日志，说明更新接入有问题，不增加额外手动 Update 来掩盖 |
+| 无异常但动作错误 | 仍按失败反馈，日志安静不是通过依据 |
+
+## 5. 怎么反馈一个可定位的问题
 
 ```text
-测试日期：
-代码提交：在仓库内执行 git rev-parse --short HEAD
-本地修改：git status --short 的输出；没有输出填“无”
-tModLoader 版本：
-启用的模组及版本：
-测试角色/世界：新建测试，或已有测试；无需上传存档
-对应测试编号：
-步骤：1. …… 2. …… 3. ……
+代码版本：git rev-parse --short HEAD
+本地改动：git status --short（没有输出填“无”）
+tModLoader 版本、启用模组：
+测试编号：D01–D07
+执行了什么命令、间隔多久：
 预期：
 实际：
-出现频率：例如 3 次中 2 次
-错误原文/日志：附复现后的完整相关片段或日志副本
-截图/短录像：有则附上
+复现次数：例如 3 次中 2 次
+/tpa status：完整回复或截图
+client.log：复现后的相关片段，保留完整错误栈
 ```
 
-一次只改一个条件，再重复同一组步骤。不要同时换装备、换世界、换多个模组，否则很难判断原因。
+一次只改一个条件。卡住时先 stop、remove，再退出游戏；不删除存档或使用 git reset --hard 来尝试修复。
 
-## 7. 保留现场与安全退出
+## 6. 可选进阶：断点
 
-角色异常时先尝试项目停止和移除操作（交付时补齐准确命令）；无响应则退出到主菜单，必要时退出游戏。不要在游戏运行时直接移动或覆盖存档。
-
-修复之前先记录 Git 提交与本地修改，不使用 `git reset --hard` 或 `git clean` 来尝试修复游戏问题。想暂时关闭功能时，通过模组菜单禁用项目并重新加载即可。
-
-## 8. 第一批交付必须补齐
-
-- 已验证的 SDK 版本、源码部署方式和构建步骤。
-- 模组准确显示名，生成/移动/跳跃/停止/移除命令及参数示例。
-- 一条从启动到清理的完整演示流程。
-- 查看对象身份、位置、生命和动作状态的方法。
-- 实际代码文件的职责与关键调试位置；IDE 断点附加调试作为可选进阶，不作为人工测试的门槛。
-- 已验证结果、已知问题及对应提交。
-
-以上项目补齐并能照做，才算完成原型文档交付。
+先掌握上述操作即可。阅读 technical-design.md 的代码职责后，可以在 Spawn、PreUpdatePlayers、Remove 设置断点，用支持 C# 的 IDE 附加到测试用 dotnet 游戏进程。当前没有交付经过实测的 IDE 调试配置，不把它写成已验证操作。更新函数断点会频繁暂停游戏，定位后及时取消。
