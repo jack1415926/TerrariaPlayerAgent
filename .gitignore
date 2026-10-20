@@ -1,0 +1,26 @@
+# Build outputs
+bin/
+obj/
+*.dll
+*.pdb
+*.tmod
+
+# Local IDE state
+.vs/
+.idea/
+*.user
+*.suo
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Runtime logs and game saves
+logs/
+Logs/
+*.log
+*.wld
+*.wld.bak
+*.plr
+*.plr.bak
