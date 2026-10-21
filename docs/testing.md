@@ -115,3 +115,27 @@ SDL 的历史 issue 892 也讨论了 Windows 字符消息、外部输入和编�
 https://github.com/libsdl-org/SDL/issues/892
 
 结论：当前角色控制架构与原生聊天文字接收路径均已有正常运行证据；需要继续定位的是桌面自动输入到 Windows/游戏字符入口之间的兼容环节。没有为此修改角色控制层或声称已修复自动文字输入。
+
+## 游戏窗口内的原生聊天替代路径（2026-10-21）
+
+已新增固定、只读的 /tpa status 全链路测试：
+
+```powershell
+.\scripts\test-chat.ps1
+```
+
+按提示在 3 秒内切回游戏。游戏已处于前台、由后台工具调用时可加 -FocusDelaySeconds 0。聊天输入必须为空；脚本拒绝覆盖已有草稿。
+
+流程：打开原生聊天框 → 等待 IME 启用 → 每次输入更新向本游戏自己的 Windows 窗口发送一个 WM_CHAR → 检查 IME 收到 11 个字符、输入长度为 11 且命令尚未执行 → 发送提交字符 → 检查原生 ChatCommandCaller 执行 status 恰好一次。
+
+实现位于 Common/NativeChatInput.cs；仅通过 -tpatest 开发入口暴露 chat-type-status 与 chat-submit-status 两个固定动作。窗口句柄来自本游戏 SDL 窗口，不接收外部窗口地址，不使用系统剪贴板，不接收任意文本，不直接赋值 Main.chatText，也不直接调用 DemoCommand.Action 提交。提交仍由原生聊天处理器解析。
+
+DemoCommand 的执行计数、最后动作和调用者类型用于区分原生 ChatCommandCaller 与测试入口的 TestCaller。角色控制逻辑未改动。
+
+实测：11 个可打印字符到达 IME；输入长度 11；提交前执行计数不变；提交后增加 1、lastAction=status、lastCaller=ChatCommandCaller，聊天框关闭并清空。报告：.local/test-results/chat-20261021-213338.json。编译 0 警告、0 错误。
+
+这是 Windows 游戏进程内的替代适配器，**不代表 Computer Use 的物理按键或 type_text 已修复，也不宣称支持任意聊天命令、其他窗口或其他操作系统**。失败时不会自动清掉已输入的部分文字，需人工确认并清理后再测；结束后关闭字符追踪和聊天框。
+
+消息语义参考：
+- https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-char
+- https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagew

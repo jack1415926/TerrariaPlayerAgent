@@ -54,3 +54,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 - [前期可行性调查](docs/p0-feasibility.md)：参考项目及固定版本证据；其中“尚未编码”等描述为调查时状态，当前状态以上文为准。
 
 项目新增代码使用 [MIT License](LICENSE)。未包含 Terraria 游戏源码、游戏二进制或第三方伙伴模组代码/资源。
+
+## 原生聊天链路测试
+
+运行 `.\scripts\test-chat.ps1`，按提示切回独立测试游戏。它通过本游戏窗口内的字符适配器输入并原生提交固定的 `/tpa status`；不修改角色控制逻辑。详见 [测试文档](docs/testing.md)。Computer Use 的通用自动文字输入仍未修复。

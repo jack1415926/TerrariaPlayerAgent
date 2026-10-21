@@ -10,6 +10,9 @@ namespace TerrariaPlayerAgent.Commands;
 
 public sealed class DemoCommand : ModCommand
 {
+    internal int ExecutionCount { get; private set; }
+    internal string LastAction { get; private set; } = "";
+    internal string LastCaller { get; private set; } = "";
     public override string Command => "tpa";
     public override CommandType Type => CommandType.Chat;
     public override string Usage => "/tpa spawn | left [seconds] | right [seconds] | jump | stop | status | remove";
@@ -17,6 +20,9 @@ public sealed class DemoCommand : ModCommand
 
     public override void Action(CommandCaller caller, string input, string[] args)
     {
+        ExecutionCount++;
+        LastAction = args.Length > 0 ? args[0] : "";
+        LastCaller = caller.GetType().Name;
         if (Main.netMode != NetmodeID.SinglePlayer)
         {
             caller.Reply("TPA demo currently supports single-player only.", Color.Orange);

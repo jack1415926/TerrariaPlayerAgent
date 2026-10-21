@@ -37,3 +37,7 @@
 - Computer Use 的 Return、普通字母和 KP_Enter 均未产生可见 SDL 键盘事件；人工 Enter 与游戏本地 SDL Enter 可以产生事件并打开聊天。工具内部发送方式仍未确证，未声称工具本身已修好。详细证据及参考资料见 testing.md。
 
 历史命令回填小模组已加入 TODO.md，尚未实现。
+
+## 原生聊天链路替代路径（2026-10-21 晚间）
+
+脚本 test-chat.ps1 已通过：11 个字符经游戏窗口 WM_CHAR 到达 IME，提交前未执行；提交后由原生 ChatCommandCaller 执行 /tpa status 恰好一次。报告 .local/test-results/chat-20261021-213338.json。仅固定只读命令，未修复或扩大 Computer Use 的系统输入能力。

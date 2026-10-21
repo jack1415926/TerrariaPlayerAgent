@@ -30,6 +30,7 @@ public sealed class LocalTestBridge : ModSystem
     {
         if (directory.Length == 0) return;
         ModContent.GetInstance<EnterDiagnostics>().Sample();
+        ModContent.GetInstance<NativeChatInput>().Tick();
         Poll();
     }
 
@@ -79,6 +80,16 @@ public sealed class LocalTestBridge : ModSystem
             diagnostics.PressEnter();
             return "Queued a game-local SDL Enter press for six input updates; not an OS keyboard event.";
         }
+        if (command == "chat-type-status")
+        {
+            ModContent.GetInstance<NativeChatInput>().BeginStatus();
+            return "Typing the fixed status command through this game's WM_CHAR handler.";
+        }
+        if (command == "chat-submit-status")
+        {
+            ModContent.GetInstance<NativeChatInput>().SubmitStatus();
+            return "Queued the fixed status command for native chat submission.";
+        }
         string[] tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         string[] allowed = { "spawn", "left", "right", "jump", "stop", "status", "remove" };
         if (tokens.Length < 2 || tokens[0] != "/tpa" || !allowed.Contains(tokens[1]))
@@ -95,6 +106,13 @@ public sealed class LocalTestBridge : ModSystem
         paused = Main.gamePaused,
         tick = Main.GameUpdateCount,
         input = ModContent.GetInstance<EnterDiagnostics>().Snapshot(),
+        chatProbe = new
+        {
+            typing = ModContent.GetInstance<NativeChatInput>().Typing,
+            executions = ModContent.GetInstance<DemoCommand>().ExecutionCount,
+            lastAction = ModContent.GetInstance<DemoCommand>().LastAction,
+            lastCaller = ModContent.GetInstance<DemoCommand>().LastCaller
+        },
         player = Main.gameMenu ? null : new
         {
             slot = Main.LocalPlayer.whoAmI,
