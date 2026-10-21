@@ -3,12 +3,14 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework.Input;
 using SDL2;
+using ReLogic.OS;
+using ReLogic.Localization.IME;
 using Terraria;
 using Terraria.ModLoader;
 
 namespace TerrariaPlayerAgent.Common;
 
-// Opt-in diagnostic: record Enter key events, never text or other key values.
+// Opt-in diagnostic: count characters and record Enter events; never store text contents.
 public sealed class EnterDiagnostics : ModSystem
 {
     private readonly ConcurrentQueue<object> events = new();
@@ -20,6 +22,14 @@ public sealed class EnterDiagnostics : ModSystem
     private int keyboardEvents;
     private int releaseAfterTicks;
     private uint inputWindow;
+    private IImeService? ime;
+    private int receivedCharacters;
+
+    private void CountCharacter(char value)
+    {
+        if (value >= 32 && value != 127)
+            System.Threading.Interlocked.Increment(ref receivedCharacters);
+    }
 
     internal void PressEnter()
     {
@@ -52,6 +62,9 @@ public sealed class EnterDiagnostics : ModSystem
         Stop();
         events.Clear();
         samples = downSamples = focusedSamples = keyboardEvents = 0;
+        receivedCharacters = 0;
+        ime = Platform.Get<IImeService>();
+        ime.AddKeyListener(CountCharacter);
         tracing = true;
         watch = Watch;
         SDL.SDL_AddEventWatch(watch, IntPtr.Zero);
@@ -61,6 +74,8 @@ public sealed class EnterDiagnostics : ModSystem
     {
         if (releaseAfterTicks > 0) { PushEnter(false); releaseAfterTicks = 0; }
         tracing = false;
+        ime?.RemoveKeyListener(CountCharacter);
+        ime = null;
         if (watch != null) SDL.SDL_DelEventWatch(watch, IntPtr.Zero);
         watch = null;
     }
@@ -92,7 +107,10 @@ public sealed class EnterDiagnostics : ModSystem
 
     internal object Snapshot() => new
     {
-        tracing, samples, downSamples, focusedSamples, keyboardEvents,
+        tracing, samples, downSamples, focusedSamples, keyboardEvents, receivedCharacters,
+        imeEnabled = Platform.Get<IImeService>().IsEnabled,
+        writingText = Terraria.GameInput.PlayerInput.WritingText,
+        chatLength = Main.chatText?.Length ?? 0,
         focused = Main.hasFocus,
         sdlKeyboardFocus = SDL.SDL_GetKeyboardFocus() != IntPtr.Zero,
         enterDown = Keyboard.GetState().IsKeyDown(Keys.Enter),

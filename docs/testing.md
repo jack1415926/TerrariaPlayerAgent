@@ -94,3 +94,24 @@ smoke-test.ps1 提示后有 3 秒切回游戏，再移除旧演示角色，生�
 编译打包成功，0 警告、0 错误。第一轮自动测试暴露了共用响应文件在 Windows 上的占用竞争，已改成每个请求独立响应文件。另确认单人失焦原生暂停会导致入口超时；曾尝试其他回调，但没有得到稳定的后台通路，已撤回这些改动，保留前台批量测试。没有修改游戏暂停规则。
 
 未安装 Cheat Sheet / HERO's Mod，未改变伤害、刷怪或资源规则。历史命令回填小模组已记入 TODO.md，本批不实现。
+
+## 字符入口小对照（2026-10-21 晚间重新启动后）
+
+新增诊断只在 trace-start 到 trace-stop 之间订阅 IImeService 的字符监听器，统计可打印字符数量，不保存文字内容；停止时解除订阅。
+
+| 方式 | IME 已启用 | 游戏字符入口计数 | 聊天框长度 |
+| --- | --- | --- | --- |
+| Computer Use type_text 输入 /tpa status | true | 0 | 0 |
+| 用户手动输入 abc，不提交 | true | 3 | 3 |
+
+两次采样均有窗口焦点、SDL 键盘焦点且聊天框打开。原始计数分别保存在 .local/test-results/ime-auto.json 与 ime-manual.json。人工结果证明监听器有效；自动输入失败位于到达 IImeService 字符监听器之前，不是游戏收到文字却未显示。
+
+writingText 在本回调采样时两次均为 false，但 IME 已启用且人工输入正常，因此不把这个瞬时值单独当作输入功能关闭的判据。测试结束已关闭追踪和聊天框。
+
+补充网络调查：未找到当前 Computer Use 与此 tModLoader 版本完全一致、已确认可直接套用的修复。微软 KEYBDINPUT 文档明确区分 Unicode/VK_PACKET 输入和物理扫描码输入，并说明字符消息的转换环节；这是后续检查工具注入兼容性的依据，不能据此断定工具实际使用了哪一种方式：
+https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput
+
+SDL 的历史 issue 892 也讨论了 Windows 字符消息、外部输入和编码的相互影响，但现象、版本均不同，不视为本问题根因或现成修复：
+https://github.com/libsdl-org/SDL/issues/892
+
+结论：当前角色控制架构与原生聊天文字接收路径均已有正常运行证据；需要继续定位的是桌面自动输入到 Windows/游戏字符入口之间的兼容环节。没有为此修改角色控制层或声称已修复自动文字输入。
