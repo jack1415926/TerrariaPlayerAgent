@@ -16,6 +16,7 @@ public sealed class DemoPlayerSystem : ModSystem
     private int moveDirection;
     private int moveTicks;
     private int jumpTicks;
+    private int autoJumpCount;
     private int updatesThisTick;
     private int lastUpdates;
     private long totalUpdates;
@@ -61,6 +62,7 @@ public sealed class DemoPlayerSystem : ModSystem
         Main.player[slot] = actor;
         totalUpdates = 0;
         lastUpdates = 0;
+        autoJumpCount = 0;
         combatEvents.Clear();
         hitCount = hurtCount = deathCount = respawnCount = 0;
         Mod.Logger.Info($"[TPA] Spawn slot={slot}, human={owner.whoAmI}, position={actor.position}");
@@ -227,6 +229,12 @@ public sealed class DemoPlayerSystem : ModSystem
         }
         Actor.controlLeft = moveTicks > 0 && moveDirection < 0;
         Actor.controlRight = moveTicks > 0 && moveDirection > 0;
+        if (moveTicks > 0 && jumpTicks == 0 && ShouldJumpObstacle(Actor, moveDirection))
+        {
+            jumpTicks = 12;
+            autoJumpCount++;
+            Mod.Logger.Info($"[TPA] AutoJump tick={Main.GameUpdateCount}, direction={moveDirection}, position={Actor.position}");
+        }
         Actor.controlJump = jumpTicks > 0;
         if (attackTicks > 0)
         {
@@ -239,6 +247,24 @@ public sealed class DemoPlayerSystem : ModSystem
         if (moveTicks > 0) moveTicks--;
         if (jumpTicks > 0) jumpTicks--;
         // The engine updates and draws this occupied slot. Do not call Player.Update again.
+    }
+
+    private static bool ShouldJumpObstacle(Player player, int direction)
+    {
+        if (player.velocity.Y != 0 || player.gravDir != 1 || !player.releaseJump ||
+            !Collision.SolidCollision(player.position + new Vector2(0, 2), player.width, player.height))
+            return false;
+        Vector2 ahead = player.position + new Vector2(direction * 16, 0);
+        if (!Collision.SolidCollision(ahead, player.width, player.height))
+            return false;
+        for (int rise = 16; rise <= 64; rise += 16)
+        {
+            // Keep the vertical path clear; jumping cannot solve a tall wall or low ceiling.
+            if (!Collision.SolidCollision(ahead - new Vector2(0, rise), player.width, player.height) &&
+                !Collision.SolidCollision(player.position - new Vector2(0, rise), player.width, player.height + rise))
+                return true;
+        }
+        return false;
     }
 
     internal void RecordUpdate(Player player)
@@ -258,7 +284,7 @@ public sealed class DemoPlayerSystem : ModSystem
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
         life = Actor.statLife, dead = Actor.dead, respawnTimer = Actor.respawnTimer,
-        moveTicks, jumpTicks, attackTicks,
+        moveTicks, jumpTicks, attackTicks, autoJumpCount,
         direction = Actor.direction, item = Actor.HeldItem.type,
         itemAnimation = Actor.itemAnimation, usingItem = Actor.controlUseItem,
         hitCount, hurtCount, deathCount, respawnCount,
@@ -277,7 +303,7 @@ public sealed class DemoPlayerSystem : ModSystem
         return $"AI slot={Actor.whoAmI}, human={owner.whoAmI}, sameObject={ReferenceEquals(Actor, owner)}; " +
             $"pos=({Actor.position.X:F1},{Actor.position.Y:F1}), velocity=({Actor.velocity.X:F2},{Actor.velocity.Y:F2}); " +
             $"life={Actor.statLife}/{Actor.statLifeMax2}, dead={Actor.dead}, respawnTicks={Actor.respawnTimer}; " +
-            $"moveTicks={moveTicks}, jumpTicks={jumpTicks}, attackTicks={attackTicks}, item={Actor.HeldItem.type}; " +
+            $"moveTicks={moveTicks}, jumpTicks={jumpTicks}, autoJumps={autoJumpCount}, attackTicks={attackTicks}, item={Actor.HeldItem.type}; " +
             $"hits={hitCount}, hurts={hurtCount}, deaths={deathCount}, respawns={respawnCount}, updates/tick={lastUpdates}, total={totalUpdates}.";
     }
 

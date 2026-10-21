@@ -45,6 +45,12 @@ smoke-test.ps1 提示后有 3 秒切回游戏，再移除旧演示角色，生�
 
 快照增加 respawnTimer 和 respawnCount。death 事件记录原生初始倒计时，respawn 事件记录游戏 tick、槽位、恢复生命、保留武器、重生位置及世界出生点；本机普通世界实测计时和位置见 validation.md。报告仍在 `.local/test-results/smoke-日期时间.json`。
 
+## 移动跨坎的小范围复测
+
+沿用 invoke-test.ps1，在已有自然台阶附近 spawn，等角色落地后采集 status，执行 `/tpa left 6` 或 `/tpa right 6`，结束后再次 status。比较 autoJumpCount、位置、deathCount 和 moveTicks：应发生自动起跳并走过台阶，不能把死亡后返回出生点的位移算作跨坎。日志记录 `[TPA] AutoJump` 的触发位置。本次仅使用现有地形和入口，未修改世界方块、增加测试服务或重跑战斗与死亡整套测试。
+
+自动重生逻辑始终默认开启；脚本清理测试角色不会修改该设置。本次跨坎测试后重新在真人旁生成了一个角色供继续观察。
+
 ## 测试入口的工作方式
 
 - 只有通过 `-tpatest` 启动才启用。play.ps1 已添加该参数，普通 Steam 启动不启用入口。
