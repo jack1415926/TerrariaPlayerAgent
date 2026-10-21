@@ -16,7 +16,7 @@
 | 构建 | 本机 SDK + 安装目录的 tMLMod.targets | 直接从 F 盘仓库构建，不复制源码到 ModSources，不引入额外 NuGet 包 |
 | 本地运行 | 项目 .local/tModLoader 独立配置 | 通过 tML 原生 -tmlsavedirectory 参数隔离本地测试配置、角色、世界和模组列表 |
 
-现阶段不加入 Python、LLM、MCP、HTTP、数据库、寻路框架或大型测试框架。
+游戏控制层保持独立 C# 模组；上层已增加标准库 Python Agent，通过 HTTPS 调用 DeepSeek、通过原有 JSON 文件入口操作游戏。尚未加入 MCP、数据库、寻路框架或大型测试框架。
 
 ## 运行流程
 

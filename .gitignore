@@ -1,6 +1,7 @@
 # Build outputs
 bin/
 obj/
+__pycache__/
 *.dll
 *.pdb
 *.tmod

@@ -2,13 +2,15 @@
 
 在 Terraria / tModLoader 中开发具有独立生命、物品和装备的 AI 队友，最终尝试合作推进至月亮领主。
 
-当前版本 **0.1.1：独立玩家移动、本地自动测试与双向战斗验证**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。暂未接入 LLM。
+当前版本 **0.1.1：独立玩家移动、本地测试与双向战斗验证**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。已通过外部 Python Agent 接入 DeepSeek API，首轮自主武器测试部分完成。
 
 ## 会话交接：自动重生与移动跨坎
 
 战斗代码基线为 `aecef3f`。本批为普通／软核 AI 增加原生倒计时后的自动重生，保留原对象和已有武器；下一批接入普通新角色初始装备与铜短剑攻击，具体见 TODO。
 
 后续修复：left/right 移动时，着地、前方有低矮实心障碍且头顶空间足够，会自动触发原生跳跃；自然地形实测已通过。status 的 autoJumps 和日志 `[TPA] AutoJump` 可查看触发情况。这是局部跨坎，不是寻路。
+
+API Agent 首轮：`scripts/run-agent.ps1` 已复用现有 JSON 入口控制运行中的 AI，不需要重启。DeepSeek 自行发出 6 批动作，木剑对史莱姆命中已确认，铁阔剑没有命中证据；模型曾误报后者成功，已记录并补充任务结果判定。下次优先处理该具体问题，见 [API Agent 说明](docs/agent-setup.md)。
 
 | 能力 | 已完成与验证 | 当前边界 |
 | --- | --- | --- |
@@ -86,7 +88,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 
 ## 文档
 
-- [API Agent 接入准备](docs/agent-setup.md)：系统提示词、前情说明、模型配置和首轮任务模板；目前为准备阶段。
+- [API Agent 接入与运行](docs/agent-setup.md)：提示词、模型配置、启动命令及首轮测试边界。
 - [游戏机制笔记](docs/game-mechanics.md)：Wiki 入口、初始装备与测试装备、当前待补机制。
 - [人工构建、演示与调试](docs/debugging.md)：启动、命令、日志和问题反馈。
 - [技术选型与实现](docs/technical-design.md)：角色生命周期、原生调度、代码职责与已知限制。
