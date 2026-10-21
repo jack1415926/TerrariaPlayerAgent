@@ -91,7 +91,7 @@ public sealed class LocalTestBridge : ModSystem
             return "Queued the fixed status command for native chat submission.";
         }
         string[] tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        string[] allowed = { "spawn", "left", "right", "jump", "stop", "status", "remove" };
+        string[] allowed = { "spawn", "left", "right", "jump", "stop", "status", "remove", "equip", "enemy", "clear-enemies", "attack" };
         if (tokens.Length < 2 || tokens[0] != "/tpa" || !allowed.Contains(tokens[1]))
             throw new InvalidOperationException("Only /tpa demo commands and documented diagnostics are allowed.");
         var caller = new TestCaller(Main.LocalPlayer);

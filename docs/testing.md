@@ -27,7 +27,17 @@ smoke-test.ps1 提示后有 3 秒切回游戏，再移除旧演示角色，生�
 
 报告位于 `.local/test-results/smoke-日期时间.json`，记录每项布尔结果和位置、输入、更新计数等证据。失败可能表示角色控制错误，也可能是起点地形不适合测试，例如被墙挡住或站在空中；查看报告中的前后位置和速度，不将所有失败都归为同一个问题。
 
-只使用已有平整地表，不修改世界方块、不生成测试物资。截图仍用于检查可见性和动画，人工仍用于体验验收；结构化测试不能代替所有视觉检查。
+基础移动测试只使用已有平整地表，不修改世界方块、不生成测试物资。战斗选项会直接发测试武器和生成敌人。截图仍用于检查可见性和动画，人工仍用于体验验收。
+
+## 双向战斗选项（2026-10-21）
+
+运行 `.\scripts\smoke-test.ps1 -Combat`，沿用相同 JSON 协议和报告目录。先执行原有 10 项移动检查，再以铁阔剑攻击史莱姆、僵尸，以木剑攻击恶魔眼；检查原生命中事件的攻击者、武器、目标槽位及目标生命变化。随后让原生僵尸接触伤害消耗 AI 的 100 生命，检查死亡、死后拒绝动作及交错攻击／停止／移除后的重建。共 25 项通过，报告见 validation.md；不增加独立测试服务。
+
+新增白名单命令为 `/tpa equip wood/iron`、`/tpa enemy slime/zombie/eye`、`/tpa clear-enemies`、`/tpa attack left/right [seconds]`。发物品、生成及清理测试敌人只在 -tpatest 下开放；攻击默认 2 秒，最多 10 秒模拟时间。
+
+快照 actor 增加 item、itemAnimation、attackTicks、usingItem、hitCount、hurtCount、deathCount、enemies 和 combatEvents。每次 spawn 重置计数，最多保留最近 64 条事件；日志同时记录 `[TPA] Combat`。item-hit 中 targetLifeAfter 是命中钩子中的 NPC 生命；hurt 中 lifeBefore 是原生扣血前生命，致死结果由 death 和最终快照确认。自然怪物也会出现在事件中，按 NPC 槽位筛选，不能拿其他怪物的命中当作测试目标通过。
+
+测试不直接调用 Hurt、KillMe 或扣血，不修改 NPC 属性、伤害倍率、刷怪、时间或暂停规则。原生怪物会移动、击退和攻击真人，测试需在近距离平地进行。AI 不会自主追敌，也不会自动重生；同一怪物的双向实测补充记录位于 `.local/test-results/combat-slime.json`。
 
 ## 测试入口的工作方式
 

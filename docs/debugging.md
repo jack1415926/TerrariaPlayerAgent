@@ -60,6 +60,35 @@ left/right 不填时长默认 2 秒；允许大于 0、最多 10 秒，小数使
 
 ## 4. 日志和常见问题
 
+### 双向战斗演示
+
+通过 play.ps1 进入专用世界，在平整地表依次执行：
+
+```text
+/tpa spawn
+/tpa equip iron
+/tpa attack right 10
+/tpa enemy slime
+/tpa status
+/tpa stop
+```
+
+攻击命令发出后，在 10 秒内生成敌人。AI 原地朝指定方向挥剑，不会自主追敌；怪物被击退或跑远后，需要调整位置或重新生成场景。新动作替换旧动作。stop 取消后续挥剑输入，已经开始的原生挥剑会完成，不会立刻冻结动画。
+
+`equip wood` 换木剑；`enemy zombie` / `enemy eye` 分别生成僵尸、恶魔眼。测试生成的怪物使用原生生命、伤害和 AI，也可能攻击真人。装备和生成敌人命令仅在 `-tpatest` 开发启动下可用；不扣测试资源。`clear-enemies` 清理本入口生成的敌人；remove 也会清理它们，不清理自然刷新的怪物。
+
+观察双方伤害：先让 AI 挥剑命中，再 stop，等史莱姆返回接触 AI。status 的 hits、hurts 应增加，AI life 下降；具体 NPC 生命、武器和双方槽位见 `[TPA] Combat` 日志。自然刷怪、向导攻击和地形可能干扰，以同一 NPC 槽位的命中和受伤事件为准。要演示死亡，可保持 AI 不攻击，重复 `enemy zombie`，让原生接触伤害消耗生命。
+
+**AI 死后不会自动重生。** 当前只完成死亡流程；执行 `/tpa remove` → `/tpa spawn` 重建，需重新 equip。死后移动、跳跃和攻击命令会提示没有存活角色。
+
+批量执行移动与战斗测试：
+
+```powershell
+.\scripts\smoke-test.ps1 -Combat
+```
+
+脚本仍预留 3 秒切回游戏，结束会移除 AI 和测试生成的敌人。报告在 `.local/test-results/smoke-日期时间.json`；不要同时手动发动作命令。
+
 本机日志目录：`F:\SteamLibrary\steamapps\common\tModLoader\tModLoader-Logs`。运行参数隔离了存档配置，但日志仍在这个安装目录；独立配置中的 Logs.lnk 也可用于定位。
 
 优先查看 client.log，搜索 `[TPA]`、`TerrariaPlayerAgent`、`Error`、`Exception`。生成和移除会记录槽位及累计更新数。每次查询 status 的完整结果也显示在游戏聊天里，可截图保留。
@@ -77,6 +106,8 @@ Get-Content -LiteralPath 'F:\SteamLibrary\steamapps\common\tModLoader\tModLoader
 | 游戏提示未知命令 | 是否用 play.ps1 启动，是否加载 Terraria Player Agent - Demo |
 | 角色不出现 | 记录 spawn 的回复；移到开阔地重试；status 检查对象是否存在 |
 | 角色不移动 | 检查剩余 ticks、是否撞墙或已死亡；连续两次 status 比较位置与 total |
+| AI 死后不重生 | 当前预期行为，remove 后 spawn 重建；尚未实现自动复活 |
+| 有挥剑但没打中 | 看 hits 和日志中 item-hit 的 NPC 槽位及 targetLifeAfter；检查朝向、距离、障碍，不以动画认定命中 |
 | updates/tick 不是 1 | 保留状态与日志，说明更新接入有问题，不增加额外手动 Update 来掩盖 |
 | 无异常但动作错误 | 仍按失败反馈，日志安静不是通过依据 |
 

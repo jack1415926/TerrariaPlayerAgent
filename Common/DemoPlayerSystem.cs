@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Terraria;
+using Terraria.DataStructures;
 using Terraria.ID;
 using Terraria.ModLoader;
 
@@ -16,6 +19,11 @@ public sealed class DemoPlayerSystem : ModSystem
     private int updatesThisTick;
     private int lastUpdates;
     private long totalUpdates;
+    private int attackTicks;
+    private int attackDirection;
+    private readonly List<object> combatEvents = new();
+    private readonly List<NPC> testEnemies = new();
+    private int hitCount, hurtCount, deathCount;
 
     internal string Spawn(Player owner)
     {
@@ -53,6 +61,8 @@ public sealed class DemoPlayerSystem : ModSystem
         Main.player[slot] = actor;
         totalUpdates = 0;
         lastUpdates = 0;
+        combatEvents.Clear();
+        hitCount = hurtCount = deathCount = 0;
         Mod.Logger.Info($"[TPA] Spawn slot={slot}, human={owner.whoAmI}, position={actor.position}");
         return $"Spawned Agent Demo in player slot {slot}. Use /tpa status.";
     }
@@ -89,9 +99,80 @@ public sealed class DemoPlayerSystem : ModSystem
 
     internal void Stop()
     {
-        moveTicks = jumpTicks = moveDirection = 0;
+        moveTicks = jumpTicks = moveDirection = attackTicks = 0;
         if (Actor != null)
             ClearInput(Actor);
+    }
+
+    internal void Attack(int direction, int ticks)
+    {
+        Stop();
+        attackDirection = direction;
+        attackTicks = ticks;
+    }
+
+    internal string Equip(string weapon)
+    {
+        if (Actor == null || Actor.dead) return "No living demo. Use /tpa remove, then /tpa spawn.";
+        int type = weapon switch { "wood" => ItemID.WoodenSword, "iron" => ItemID.IronBroadsword, _ => 0 };
+        if (type == 0) return "Weapon must be wood or iron.";
+        Stop();
+        Actor.inventory[0].SetDefaults(type);
+        Actor.selectedItem = 0;
+        Actor.releaseUseItem = true;
+        return $"Equipped vanilla {Actor.HeldItem.Name} (item={type}, damage={Actor.HeldItem.damage}).";
+    }
+
+    internal string SpawnEnemy(string kind)
+    {
+        if (Actor == null || Actor.dead) return "No living demo. Use /tpa remove, then /tpa spawn.";
+        int type = kind switch { "slime" => NPCID.BlueSlime, "zombie" => NPCID.Zombie, "eye" => NPCID.DemonEye, _ => -1 };
+        if (type < 0) return "Enemy must be slime, zombie or eye.";
+        Vector2 bottom = Actor.Bottom + new Vector2(Actor.direction * 28, 0);
+        int slot = NPC.NewNPC(Actor.GetSource_Misc("TPA combat test"), (int)bottom.X, (int)bottom.Y, type);
+        if (slot >= Main.maxNPCs) return "No free NPC slot.";
+        NPC npc = Main.npc[slot];
+        testEnemies.Add(npc);
+        Mod.Logger.Info($"[TPA] Test enemy slot={slot}, type={npc.type}, life={npc.life}, damage={npc.damage}");
+        return $"Spawned vanilla {kind}, NPC slot={slot}, life={npc.life}, damage={npc.damage}.";
+    }
+
+    internal void ClearEnemies()
+    {
+        foreach (NPC npc in testEnemies)
+            if (ReferenceEquals(Main.npc[npc.whoAmI], npc)) npc.active = false;
+        testEnemies.Clear();
+    }
+
+    private void RecordCombat(object entry)
+    {
+        if (combatEvents.Count == 64) combatEvents.RemoveAt(0);
+        combatEvents.Add(entry);
+        Mod.Logger.Info($"[TPA] Combat {System.Text.Json.JsonSerializer.Serialize(entry)}");
+    }
+
+    internal void RecordHit(Item item, NPC npc, int damage)
+    {
+        hitCount++;
+        RecordCombat(new { kind = "item-hit", tick = Main.GameUpdateCount, attacker = Actor!.whoAmI,
+            item = item.type, npc = npc.whoAmI, npcType = npc.type, damage, targetLifeAfter = npc.life });
+    }
+
+    internal void RecordHurt(Player.HurtInfo info)
+    {
+        hurtCount++;
+        int source = info.DamageSource.SourceNPCIndex;
+        RecordCombat(new { kind = "hurt", tick = Main.GameUpdateCount, victim = Actor!.whoAmI,
+            npc = source, npcType = source >= 0 ? Main.npc[source].type : -1,
+            damage = info.Damage, lifeBefore = Actor.statLife });
+    }
+
+    internal void RecordDeath(PlayerDeathReason reason)
+    {
+        deathCount++;
+        Stop();
+        RecordCombat(new { kind = "death", tick = Main.GameUpdateCount, victim = Actor!.whoAmI,
+            npc = reason.SourceNPCIndex, life = Actor.statLife, dead = Actor.dead });
     }
 
     private static void ClearInput(Player player)
@@ -105,6 +186,7 @@ public sealed class DemoPlayerSystem : ModSystem
     internal void Remove()
     {
         Stop();
+        ClearEnemies();
         if (Actor == null)
             return;
         int slot = Actor.whoAmI;
@@ -135,6 +217,14 @@ public sealed class DemoPlayerSystem : ModSystem
         Actor.controlLeft = moveTicks > 0 && moveDirection < 0;
         Actor.controlRight = moveTicks > 0 && moveDirection > 0;
         Actor.controlJump = jumpTicks > 0;
+        if (attackTicks > 0)
+        {
+            Actor.direction = attackDirection;
+            Actor.controlUseItem = true;
+            // A new press between swings preserves vanilla non-auto-reuse swords.
+            if (Actor.itemAnimation == 0) Actor.releaseUseItem = true;
+            attackTicks--;
+        }
         if (moveTicks > 0) moveTicks--;
         if (jumpTicks > 0) jumpTicks--;
         // The engine updates and draws this occupied slot. Do not call Player.Update again.
@@ -157,7 +247,14 @@ public sealed class DemoPlayerSystem : ModSystem
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
         life = Actor.statLife, dead = Actor.dead,
-        moveTicks, jumpTicks,
+        moveTicks, jumpTicks, attackTicks,
+        direction = Actor.direction, item = Actor.HeldItem.type,
+        itemAnimation = Actor.itemAnimation, usingItem = Actor.controlUseItem,
+        hitCount, hurtCount, deathCount,
+        combatEvents = combatEvents.ToArray(),
+        enemies = testEnemies.Select(n => new { slot = n.whoAmI, type = n.type,
+            active = ReferenceEquals(Main.npc[n.whoAmI], n) && n.active,
+            life = n.life, x = n.position.X, y = n.position.Y }).ToArray(),
         left = Actor.controlLeft, right = Actor.controlRight, jumping = Actor.controlJump,
         updatesPerTick = lastUpdates, totalUpdates
     };
@@ -169,7 +266,8 @@ public sealed class DemoPlayerSystem : ModSystem
         return $"AI slot={Actor.whoAmI}, human={owner.whoAmI}, sameObject={ReferenceEquals(Actor, owner)}; " +
             $"pos=({Actor.position.X:F1},{Actor.position.Y:F1}), velocity=({Actor.velocity.X:F2},{Actor.velocity.Y:F2}); " +
             $"life={Actor.statLife}/{Actor.statLifeMax2}, dead={Actor.dead}; " +
-            $"moveTicks={moveTicks}, jumpTicks={jumpTicks}, updates/tick={lastUpdates}, total={totalUpdates}.";
+            $"moveTicks={moveTicks}, jumpTicks={jumpTicks}, attackTicks={attackTicks}, item={Actor.HeldItem.type}; " +
+            $"hits={hitCount}, hurts={hurtCount}, deaths={deathCount}, updates/tick={lastUpdates}, total={totalUpdates}.";
     }
 
     public override void OnWorldUnload() => Remove();
@@ -180,4 +278,29 @@ public sealed class DemoPlayerSystem : ModSystem
 public sealed class DemoUpdateProbe : ModPlayer
 {
     public override void PreUpdate() => ModContent.GetInstance<DemoPlayerSystem>().RecordUpdate(Player);
+
+    private DemoPlayerSystem System => ModContent.GetInstance<DemoPlayerSystem>();
+    private bool IsActor => Main.netMode == NetmodeID.SinglePlayer && ReferenceEquals(Player, System.Actor);
+
+    public override void PostUpdate()
+    {
+        // Player.Update's local-only interaction block skips this for extra slots.
+        if (IsActor && Player.whoAmI != Main.myPlayer && !Player.dead)
+            Player.Update_NPCCollision();
+    }
+
+    public override void OnHitNPCWithItem(Item item, NPC target, NPC.HitInfo hit, int damageDone)
+    {
+        if (IsActor) System.RecordHit(item, target, damageDone);
+    }
+
+    public override void OnHurt(Player.HurtInfo info)
+    {
+        if (IsActor) System.RecordHurt(info);
+    }
+
+    public override void Kill(double damage, int hitDirection, bool pvp, PlayerDeathReason damageSource)
+    {
+        if (IsActor) System.RecordDeath(damageSource);
+    }
 }

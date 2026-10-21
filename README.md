@@ -2,28 +2,27 @@
 
 在 Terraria / tModLoader 中开发具有独立生命、物品和装备的 AI 队友，最终尝试合作推进至月亮领主。
 
-当前版本 **0.1.1：独立玩家移动演示与本地自动测试**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。暂未接入 LLM。
+当前版本 **0.1.1：独立玩家移动、本地自动测试与双向战斗验证**。C# 12 / .NET 8，独立 tModLoader 模组，无第三方伙伴模组依赖。暂未接入 LLM。
 
-## 会话交接：当前批次已收尾
+## 会话交接：双向战斗批次已收尾
 
-功能代码基线：`08eef98`。下一聊天从 [TODO 的双向战斗验证](TODO.md#下一批双向战斗验证) 开始，不再继续扩展本批聊天输入调查。
+移动基线为 `08eef98`，在此基础上已完成 [TODO 的双向战斗验证](TODO.md#双向战斗验证已完成)。接下来先确定复活批次的范围，不继续扩大聊天输入调查或战斗框架。
 
 | 能力 | 已完成与验证 | 当前边界 |
 | --- | --- | --- |
-| 独立角色 | 单客户端中的独立 Player，生成、移动、跳跃、停止、移除；人工确认退出重进清理正常 | 单人、单角色，完整装备、受伤、死亡复活尚未验证 |
-| 自动测试 | 本地 JSON 入口，10 项角色检查通过，执行部分约 4 秒 | 单人失焦会暂停，测试游戏须保持前台 |
+| 独立角色 | 单客户端中的独立 Player，生成、移动、跳跃、停止、移除；人工确认退出重进清理正常 | 单人、单角色，无持久化 |
+| 双向战斗 | 铁阔剑命中史莱姆、僵尸，木剑命中恶魔眼；同一史莱姆与 AI 互伤；NPC 接触伤害可致死 | 只适配两把剑；没有自主追敌、自动复活或完整装备兼容 |
+| 自动测试 | 沿用本地 JSON 入口，`smoke-test.ps1 -Combat` 的 25 项检查通过 | 单人失焦会暂停，测试游戏须保持前台 |
 | 原生聊天测试 | 11 个字符经本游戏窗口 WM_CHAR 进入 IME；原生 ChatCommandCaller 提交 `/tpa status` 恰好一次 | 适配器只支持固定只读状态命令；不是任意文字/命令输入工具 |
 | 桌面输入调查 | 自动 type_text 的字符入口计数为 0，人工 abc 为 3 | Computer Use 通用按键和文字注入未修复；现有替代路径足够继续角色开发 |
 
 下一聊天先读本节、TODO.md、docs/technical-design.md，按需要查看 docs/testing.md。docs/validation.md 是追加式历史记录，以较新的验收条目为准，不把早期“未测”描述当作当前状态。
 
-实现入口：Common/DemoPlayerSystem.cs 管角色和控制，Commands/DemoCommand.cs 管命令，Common/LocalTestBridge.cs 管开发测试请求。当前角色依靠玩家槽位的原生循环更新，没有手动重复调用 Player.Update，也没有切换 Main.myPlayer。战斗前应针对匹配版本核对原生代码中本地玩家专属的执行路径，不能由移动成功推定伤害机制可用。
+实现入口：Common/DemoPlayerSystem.cs 管角色、控制、NPC 接触伤害及战斗日志，Common/NativeCombat.cs 适配三个原生战斗归属检查，Commands/DemoCommand.cs 管命令，Common/LocalTestBridge.cs 管开发测试请求。角色依靠玩家槽位的原生循环更新，没有重复调用 Player.Update，也没有切换 Main.myPlayer。适配针对本机 tML 2026.08.3.0，升级游戏后需要重新检查这些分支。
 
 开发与测试约定：专用新角色和新世界可直接用作可破坏测试环境。允许发测试装备、生成敌人、反复死亡和重建、连续及异常操作；必要的本地测试操作自主完成，不逐项请求确认。优先复用脚本和结构化结果，按变更做必要验证，避免堆叠测试设施。窗口操作围绕 tModLoader，Mod Organizer 与本项目无关。
 
-下个聊天可直接使用：
-
-> 阅读本仓库 README 的会话交接和 TODO 的“下一批：双向战斗验证”。开始实现原版近战武器攻击史莱姆、AI 正常受伤及死亡的最小验证。专用测试角色和世界可破坏，可以直接生成测试装备和敌人并做压力测试。沿用已有本地测试入口；同步更新人工调试步骤、验收结果并提交本地 Git，不继续扩大聊天输入调查。
+本批验收：构建打包 0 警告、0 错误；移动与战斗自动检查 25/25 通过。原始报告及具体生命变化见 [验证记录](docs/validation.md)。AI 死后不会自动重生，使用 `/tpa remove` 再 `/tpa spawn` 重建。
 
 ## 快速开始
 
@@ -46,6 +45,10 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 /tpa jump
 /tpa stop
 /tpa status
+/tpa equip iron
+/tpa attack right 10
+/tpa enemy slime
+/tpa stop
 /tpa remove
 ```
 
@@ -55,7 +58,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 
 ## 自动测试
 
-进入专用测试世界后运行 `.\scripts\smoke-test.ps1`，按提示在 3 秒内切回游戏。测试会自动执行动作并输出 JSON 报告。AI 调用时可保持游戏前台并传入 `-FocusDelaySeconds 0`，无需逐步截图。
+进入专用测试世界后运行 `.\scripts\smoke-test.ps1`；加 `-Combat` 同时执行双向战斗检查，包括生成敌人和让 AI 死亡。按提示在 3 秒内切回游戏，测试会输出 JSON 报告。AI 调用时可保持游戏前台并传入 `-FocusDelaySeconds 0`，无需逐步截图。
 
 详见 [本地测试与 Enter 诊断](docs/testing.md)。历史命令回填小模组及测试辅助模组见 [待办](TODO.md)。
 
@@ -63,7 +66,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 
 - 已验证：编译打包 0 警告、0 错误，模组成功加载；用户确认角色出现、移动、跳跃、提前停止、重复移除和退出重进后的清理正常。
 - 其余首批细项逐项见 [验证记录](docs/validation.md) 和 [人工测试清单](docs/manual-tests.md)。
-- 单人、一个演示角色；没有装备交互、战斗、死亡复活保证、AI 存档、跟随或寻路。测试物品可直接生成，AI 数据尚不持久化。
+- 单人、一个演示角色；仅木剑和铁阔剑近战、NPC 接触伤害及死亡已验证。没有自动复活、完整装备交互、AI 存档、跟随或寻路；投射物、陷阱和环境伤害尚未逐项验证。测试物品可直接生成，AI 数据不持久化。
 - 多人目标为 2–3 名真人加 1 个共享 AI，留待后续；当前多人命令会拒绝执行。
 
 ## 文档

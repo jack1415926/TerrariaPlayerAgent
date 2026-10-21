@@ -1,4 +1,4 @@
-param([int]$FocusDelaySeconds = 3)
+param([int]$FocusDelaySeconds = 3, [switch]$Combat)
 $ErrorActionPreference = 'Stop'
 $invoke = Join-Path $PSScriptRoot 'invoke-test.ps1'
 $results = [Collections.Generic.List[object]]::new()
@@ -41,6 +41,62 @@ try {
     & $invoke -Command '/tpa remove' | Out-Null
     $removed = & $invoke -Command '/tpa remove'
     Assert-Demo 'repeated removal leaves no actor' ($null -eq $removed.state.actor) $removed.state
+    if ($Combat) {
+        # Use native NPCs and item hits; no injected damage or altered NPC stats.
+        foreach ($enemy in @('slime', 'zombie', 'eye')) {
+            & $invoke -Command '/tpa remove' | Out-Null
+            & $invoke -Command '/tpa spawn' | Out-Null
+            $weapon = if ($enemy -eq 'eye') { 'wood' } else { 'iron' }
+            & $invoke -Command "/tpa equip $weapon" | Out-Null
+            & $invoke -Command '/tpa attack right 10' | Out-Null
+            $target = & $invoke -Command "/tpa enemy $enemy"
+            $npcSlot = $target.state.actor.enemies[-1].slot
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                Start-Sleep -Milliseconds 100
+                $fight = & $invoke -Command status
+                $hits = @($fight.state.actor.combatEvents | Where-Object { $_.kind -eq 'item-hit' -and $_.npc -eq $npcSlot })
+            } while ($hits.Count -eq 0 -and -not $fight.state.actor.dead -and $timer.Elapsed.TotalSeconds -lt 5)
+            Assert-Demo "vanilla $weapon sword hits $enemy" ($hits.Count -gt 0 -and
+                $hits[0].attacker -eq $fight.state.actor.slot -and
+                $hits[0].item -eq $fight.state.actor.item -and
+                $hits[0].damage -gt 0 -and $hits[0].targetLifeAfter -lt $target.state.actor.enemies[-1].life) $fight.state.actor
+            $stopped = & $invoke -Command '/tpa stop'
+            Assert-Demo "stop cancels $enemy attack input" ($stopped.state.actor.attackTicks -eq 0 -and -not $stopped.state.actor.usingItem) $stopped.state.actor
+            # Stop permits the current native swing to finish, then no more swings.
+            Start-Sleep -Milliseconds 700
+            $idle = & $invoke -Command status
+            Assert-Demo "swing finishes after stop ($enemy)" ($idle.state.actor.itemAnimation -eq 0) $idle.state.actor
+        }
+        & $invoke -Command '/tpa remove' | Out-Null
+        & $invoke -Command '/tpa spawn' | Out-Null
+        $initial = & $invoke -Command status
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            & $invoke -Command '/tpa enemy zombie' | Out-Null
+            Start-Sleep -Milliseconds 900
+            $victim = & $invoke -Command status
+        } while (-not $victim.state.actor.dead -and $timer.Elapsed.TotalSeconds -lt 30)
+        Assert-Demo 'native NPC contact hurts AI' ($victim.state.actor.hurtCount -gt 0 -and
+            $victim.state.actor.life -lt $initial.state.actor.life) $victim.state.actor
+        Assert-Demo 'native lethal NPC damage kills AI' ($victim.state.actor.dead -and
+            $victim.state.actor.life -eq 0 -and $victim.state.actor.deathCount -eq 1) $victim.state.actor
+        foreach ($command in @('/tpa attack right', '/tpa right', '/tpa jump')) {
+            $dead = & $invoke -Command $command
+            Assert-Demo "dead actor rejects $command" ($dead.reply -like 'No living demo*' -and $dead.state.actor.attackTicks -eq 0) $dead.reply
+        }
+        & $invoke -Command '/tpa remove' | Out-Null
+        & $invoke -Command '/tpa spawn' | Out-Null
+        & $invoke -Command '/tpa equip iron' | Out-Null
+        & $invoke -Command '/tpa attack left 10' | Out-Null
+        & $invoke -Command '/tpa stop' | Out-Null
+        & $invoke -Command '/tpa attack right 10' | Out-Null
+        & $invoke -Command '/tpa remove' | Out-Null
+        $rebuilt = & $invoke -Command '/tpa spawn'
+        Assert-Demo 'rebuild after death and interleaved actions' (-not $rebuilt.state.actor.dead -and
+            $rebuilt.state.actor.life -eq 100 -and $rebuilt.state.actor.attackTicks -eq 0 -and
+            $rebuilt.state.actor.hitCount -eq 0 -and @($rebuilt.state.actor.enemies).Count -eq 0) $rebuilt.state.actor
+    }
 } catch {
     $results.Add(@{test='execution';passed=$false;error=$_.Exception.Message})
     throw
