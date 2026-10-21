@@ -25,7 +25,7 @@ API Agent 首轮：`scripts/run-agent.ps1` 已复用现有 JSON 入口控制运�
 | 原生聊天测试 | 11 个字符经本游戏窗口 WM_CHAR 进入 IME；原生 ChatCommandCaller 提交 `/tpa status` 恰好一次 | 适配器只支持固定只读状态命令；不是任意文字/命令输入工具 |
 | 桌面输入调查 | 自动 type_text 的字符入口计数为 0，人工 abc 为 3 | Computer Use 通用按键和文字注入未修复；现有替代路径足够继续角色开发 |
 
-下一聊天先读本节、TODO.md、docs/technical-design.md，按需要查看 docs/testing.md。docs/validation.md 是追加式历史记录，以较新的验收条目为准，不把早期“未测”描述当作当前状态。
+下一聊天先读本节、TODO.md 和 [可复用开发经验](docs/development-experience.md)，再按任务需要查看 technical-design.md 或 testing.md。docs/validation.md 是追加式历史记录，以较新的验收条目为准，不把早期“未测”描述当作当前状态。
 
 实现入口：Common/DemoPlayerSystem.cs 管角色、控制、NPC 接触伤害及战斗日志，Common/NativeCombat.cs 适配三个原生战斗归属检查，Commands/DemoCommand.cs 管命令，Common/LocalTestBridge.cs 管开发测试请求。角色依靠玩家槽位的原生循环更新，没有重复调用 Player.Update，也没有切换 Main.myPlayer。适配针对本机 tML 2026.08.3.0，升级游戏后需要重新检查这些分支。
 
@@ -92,6 +92,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 
 ## 文档
 
+- [可复用开发经验](docs/development-experience.md)：小场景交付、必要检查的停止条件、工具与重启选择、模型事实反馈及收尾方式；后续开工前参考。
 - [API Agent 接入与运行](docs/agent-setup.md)：提示词、模型配置、启动命令及首轮测试边界。
 - [长时间运行上下文开销分析](docs/agent-context-cost.md)：本轮 usage 构成、优化方向和实施时机，当前低优先级。
 - [游戏机制笔记](docs/game-mechanics.md)：Wiki 入口、初始装备与测试装备、当前待补机制。
