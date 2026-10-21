@@ -86,6 +86,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 
 ## 文档
 
+- [API Agent 接入准备](docs/agent-setup.md)：系统提示词、前情说明、模型配置和首轮任务模板；目前为准备阶段。
 - [游戏机制笔记](docs/game-mechanics.md)：Wiki 入口、初始装备与测试装备、当前待补机制。
 - [人工构建、演示与调试](docs/debugging.md)：启动、命令、日志和问题反馈。
 - [技术选型与实现](docs/technical-design.md)：角色生命周期、原生调度、代码职责与已知限制。
