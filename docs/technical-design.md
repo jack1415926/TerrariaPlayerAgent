@@ -39,7 +39,7 @@
 ## 当前限制
 
 - 单人演示，最多一个角色；多人命令明确拒绝，尚无服务器权威或网络同步。
-- 不是完整玩家兼容实现：原生 Player.Update 中有大量仅对 Main.myPlayer 生效的路径。目前仅验证木剑、铁阔剑、NPC 接触伤害和死亡；拾取、投射物伤害、环境伤害、完整装备效果及复活未完成验证。
+- 不是完整玩家兼容实现：原生 Player.Update 中有大量仅对 Main.myPlayer 生效的路径。目前覆盖木剑、铁阔剑、NPC 接触伤害、死亡及普通／软核自动重生；拾取、投射物伤害、环境伤害和完整装备效果未完成验证。
 - 不持久化 AI 的物品或状态。退出后需要重新生成；原型还没有物品交互，不应通过其他模组向它转交贵重物品。
 - 没有跟随、自主追敌、寻路或自动防卡。当前攻击只在原地指定朝向挥剑；墙体和障碍可能阻挡移动。
 - 第三方模组兼容未测。首次测试只有本项目，后续按需要扩充。
@@ -56,7 +56,11 @@
 
 本机版本的 `Player.ItemCheck_Inner` 第一个 myPlayer 比较会跳过非本地槽位的起手逻辑；`ItemCheck_OwnerOnlyCode` 第一个 myPlayer 比较在近战命中段前返回；`Hurt(HurtInfo, bool)` 最后一个 myPlayer 比较阻止非本地槽位调用原生 KillMe。`Common/NativeCombat.cs` 用 tML 自带 MonoMod IL 钩子，仅在这些比较处将本演示角色视为归属者，武器两处仅对白名单木剑和铁阔剑生效，其他玩家保持原行为。没有改写全局 Main.myPlayer，也没有复制原生伤害公式、命中框或直接扣血。
 
-`Player.Update` 的本地交互段包含 `Update_NPCCollision`。AI 槽位原生跳过该段，因此在 `DemoUpdateProbe.PostUpdate` 为存活的 AI 补调一次此方法，让原生碰撞、伤害计算、免伤时间、击退、Hurt 及 KillMe 生效；不再调用 Player.Update。死亡钩子清除控制，保持 dead 状态，恢复需 remove → spawn。
+`Player.Update` 的本地交互段包含 `Update_NPCCollision`。AI 槽位原生跳过该段，因此在 `DemoUpdateProbe.PostUpdate` 为存活的 AI 补调一次此方法，让原生碰撞、伤害计算、免伤时间、击退、Hurt 及 KillMe 生效；不再调用 Player.Update。死亡钩子清除控制。
+
+自动重生沿用同文件 `NativeCombat.UpdateDead` 的方法钩子：先让原生 UpdateDead 执行，包括递减 respawnTimer；然后仅为本项目仍活动、死亡、计时归零的普通／软核 AI 补调 FindSpawn、CheckSpawn 和 Spawn(ReviveFromDeath)。这些方法保留背包并恢复生命、位置及出生保护，未创建新 Player，也没有切换 Main.myPlayer。原生 Spawn 保留自身的本地玩家检查，真人镜头不会被改成 AI 镜头。重生后清除控制并记录事件。
+
+角色移除或退出世界时，沿用 Remove 清理并撤出玩家槽位；没有独立延迟任务或待重生队列，所以对象移除后不会再被重生钩子匹配。当前 AI 没有床出生点设置入口，默认使用世界出生点；不支持中核和硬核复活策略。
 
 适配基于本机 tML 2026.08.3.0 的方法位置；升级后要重查，不能把它视为通用玩家兼容层。反编译调查仅留在被忽略的 `.local/research`，不提交游戏代码。
 

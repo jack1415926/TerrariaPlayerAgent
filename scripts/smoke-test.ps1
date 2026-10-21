@@ -1,4 +1,4 @@
-param([int]$FocusDelaySeconds = 3, [switch]$Combat)
+param([int]$FocusDelaySeconds = 3, [switch]$Combat, [switch]$Respawn)
 $ErrorActionPreference = 'Stop'
 $invoke = Join-Path $PSScriptRoot 'invoke-test.ps1'
 $results = [Collections.Generic.List[object]]::new()
@@ -6,6 +6,17 @@ function Assert-Demo([string]$Name, [bool]$Condition, $Evidence) {
     $results.Add(@{test=$Name;passed=$Condition;evidence=$Evidence})
     if (-not $Condition) { throw "FAIL: $Name" }
     Write-Host "PASS: $Name"
+}
+function Wait-DemoDeath {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        # Keep contact even when vanilla daytime zombies walk away.
+        & $invoke -Command '/tpa right 2' | Out-Null
+        & $invoke -Command '/tpa enemy zombie' | Out-Null
+        Start-Sleep -Milliseconds 900
+        $victim = & $invoke -Command status
+    } while (-not $victim.state.actor.dead -and $timer.Elapsed.TotalSeconds -lt 30)
+    return $victim
 }
 try {
     if ($FocusDelaySeconds -gt 0) {
@@ -15,6 +26,54 @@ try {
     $ready = & $invoke -Command status
     Assert-Demo 'single-player world is running' (-not $ready.state.gameMenu -and $ready.state.netMode -eq 0) $ready.state
     Assert-Demo 'game is focused and simulation is running' ($ready.state.input.focused -and -not $ready.state.paused) $ready.state.input
+    if ($Respawn) {
+        & $invoke -Command '/tpa remove' | Out-Null
+        $original = & $invoke -Command '/tpa spawn'
+        & $invoke -Command '/tpa equip iron' | Out-Null
+        $victim = Wait-DemoDeath
+        Assert-Demo 'NPC damage starts native respawn countdown' ($victim.state.actor.dead -and
+            $victim.state.actor.respawnTimer -gt 0) $victim.state.actor
+        & $invoke -Command '/tpa clear-enemies' | Out-Null
+        $rejected = & $invoke -Command '/tpa attack right 10'
+        Assert-Demo 'dead actor waits for automatic respawn' ($rejected.reply -like '*Waiting for automatic respawn*' -and
+            $rejected.state.actor.attackTicks -eq 0) $rejected.reply
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            Start-Sleep -Milliseconds 200
+            $revived = & $invoke -Command status
+        } while ($revived.state.actor.dead -and $timer.Elapsed.TotalSeconds -lt 20)
+        $actor = $revived.state.actor
+        Assert-Demo 'automatic respawn keeps actor and death history' (-not $actor.dead -and $actor.life -gt 0 -and
+            $actor.slot -eq $original.state.actor.slot -and $actor.deathCount -eq 1 -and $actor.respawnCount -eq 1) $actor
+        Assert-Demo 'respawn preserves equipped sword' ($actor.item -eq 4) $actor
+        Assert-Demo 'respawn leaves no old action running' ($actor.moveTicks -eq 0 -and $actor.jumpTicks -eq 0 -and
+            $actor.attackTicks -eq 0 -and -not $actor.usingItem) $actor
+        $death = @($actor.combatEvents | Where-Object kind -eq death)[0]
+        $respawnEvent = @($actor.combatEvents | Where-Object kind -eq respawn)[0]
+        Assert-Demo 'native countdown elapses before respawn' ($respawnEvent.tick - $death.tick -eq $death.respawnTimer) @{death=$death;respawn=$respawnEvent}
+        & $invoke -Command '/tpa right 0.25' | Out-Null
+        Start-Sleep -Milliseconds 500
+        $moved = & $invoke -Command status
+        Assert-Demo 'movement works after respawn' ($moved.state.actor.x -gt $actor.x + 2) @{before=$actor;after=$moved.state.actor}
+        & $invoke -Command '/tpa attack right 10' | Out-Null
+        Start-Sleep -Milliseconds 100
+        $attack = & $invoke -Command status
+        Assert-Demo 'native sword use works after respawn' ($attack.state.actor.itemAnimation -gt 0) $attack.state.actor
+        & $invoke -Command '/tpa stop' | Out-Null
+        $secondDeath = Wait-DemoDeath
+        Assert-Demo 'second death starts countdown again' ($secondDeath.state.actor.dead -and
+            $secondDeath.state.actor.deathCount -eq 2) $secondDeath.state.actor
+        $removal = & $invoke -Command '/tpa remove'
+        $dueTick = $removal.state.tick + $secondDeath.state.actor.respawnTimer
+        $timer.Restart()
+        do {
+            Start-Sleep -Milliseconds 500
+            $removed = & $invoke -Command status
+        } while ($removed.state.tick -lt $dueTick -and $timer.Elapsed.TotalSeconds -lt 20)
+        Assert-Demo 'removal cancels pending respawn' ($null -eq $removed.state.actor -and
+            $removed.state.tick -ge $dueTick) $removed.state
+        return
+    }
     & $invoke -Command '/tpa remove' | Out-Null
     $spawn = & $invoke -Command '/tpa spawn'
     Assert-Demo 'independent Player exists' ($null -ne $spawn.state.actor -and $spawn.state.actor.slot -ne $spawn.state.player.slot) $spawn.state
@@ -71,12 +130,7 @@ try {
         & $invoke -Command '/tpa remove' | Out-Null
         & $invoke -Command '/tpa spawn' | Out-Null
         $initial = & $invoke -Command status
-        $timer = [Diagnostics.Stopwatch]::StartNew()
-        do {
-            & $invoke -Command '/tpa enemy zombie' | Out-Null
-            Start-Sleep -Milliseconds 900
-            $victim = & $invoke -Command status
-        } while (-not $victim.state.actor.dead -and $timer.Elapsed.TotalSeconds -lt 30)
+        $victim = Wait-DemoDeath
         Assert-Demo 'native NPC contact hurts AI' ($victim.state.actor.hurtCount -gt 0 -and
             $victim.state.actor.life -lt $initial.state.actor.life) $victim.state.actor
         Assert-Demo 'native lethal NPC damage kills AI' ($victim.state.actor.dead -and

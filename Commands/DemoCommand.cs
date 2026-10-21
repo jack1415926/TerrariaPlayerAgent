@@ -73,7 +73,8 @@ public sealed class DemoCommand : ModCommand
         {
             if (system.Actor == null || system.Actor.dead)
             {
-                caller.Reply("No living demo. Use /tpa remove, then /tpa spawn.", Color.Orange);
+                caller.Reply(system.Actor == null ? "No living demo. Use /tpa spawn." :
+                    "No living demo. Waiting for automatic respawn.", Color.Orange);
                 return;
             }
             if (action == "jump")

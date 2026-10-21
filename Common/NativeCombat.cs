@@ -2,6 +2,7 @@ using System;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using Terraria;
+using Terraria.DataStructures;
 using Terraria.ID;
 using Terraria.ModLoader;
 
@@ -15,6 +16,7 @@ public sealed class NativeCombat : ModSystem
         IL_Player.ItemCheck_Inner += ItemStart;
         IL_Player.ItemCheck_OwnerOnlyCode += MeleeOwner;
         IL_Player.Hurt_HurtInfo_bool += LethalHurt;
+        On_Player.UpdateDead += UpdateDead;
     }
 
     public override void Unload()
@@ -22,10 +24,25 @@ public sealed class NativeCombat : ModSystem
         IL_Player.ItemCheck_Inner -= ItemStart;
         IL_Player.ItemCheck_OwnerOnlyCode -= MeleeOwner;
         IL_Player.Hurt_HurtInfo_bool -= LethalHurt;
+        On_Player.UpdateDead -= UpdateDead;
     }
 
     private static bool IsActor(Player player) => Main.netMode == NetmodeID.SinglePlayer &&
         ReferenceEquals(player, ModContent.GetInstance<DemoPlayerSystem>().Actor);
+
+    private static void UpdateDead(On_Player.orig_UpdateDead orig, Player player)
+    {
+        orig(player);
+        // The native countdown runs for extra slots, but only the local slot calls Spawn.
+        if (!IsActor(player) || !player.active || !player.dead || player.respawnTimer > 0 ||
+            player.difficulty != PlayerDifficultyID.SoftCore)
+            return;
+        player.FindSpawn();
+        if (!Player.CheckSpawn(player.SpawnX, player.SpawnY))
+            player.SpawnX = player.SpawnY = -1;
+        player.Spawn(PlayerSpawnContext.ReviveFromDeath);
+        ModContent.GetInstance<DemoPlayerSystem>().RecordRespawn();
+    }
 
     private static void ItemStart(ILContext il) => ExtendOwnerCheck(il, false, true);
     private static void MeleeOwner(ILContext il) => ExtendOwnerCheck(il, false, true);

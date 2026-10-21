@@ -23,7 +23,7 @@ public sealed class DemoPlayerSystem : ModSystem
     private int attackDirection;
     private readonly List<object> combatEvents = new();
     private readonly List<NPC> testEnemies = new();
-    private int hitCount, hurtCount, deathCount;
+    private int hitCount, hurtCount, deathCount, respawnCount;
 
     internal string Spawn(Player owner)
     {
@@ -62,7 +62,7 @@ public sealed class DemoPlayerSystem : ModSystem
         totalUpdates = 0;
         lastUpdates = 0;
         combatEvents.Clear();
-        hitCount = hurtCount = deathCount = 0;
+        hitCount = hurtCount = deathCount = respawnCount = 0;
         Mod.Logger.Info($"[TPA] Spawn slot={slot}, human={owner.whoAmI}, position={actor.position}");
         return $"Spawned Agent Demo in player slot {slot}. Use /tpa status.";
     }
@@ -113,7 +113,7 @@ public sealed class DemoPlayerSystem : ModSystem
 
     internal string Equip(string weapon)
     {
-        if (Actor == null || Actor.dead) return "No living demo. Use /tpa remove, then /tpa spawn.";
+        if (Actor == null || Actor.dead) return "No living demo. Spawn one or wait for automatic respawn.";
         int type = weapon switch { "wood" => ItemID.WoodenSword, "iron" => ItemID.IronBroadsword, _ => 0 };
         if (type == 0) return "Weapon must be wood or iron.";
         Stop();
@@ -125,7 +125,7 @@ public sealed class DemoPlayerSystem : ModSystem
 
     internal string SpawnEnemy(string kind)
     {
-        if (Actor == null || Actor.dead) return "No living demo. Use /tpa remove, then /tpa spawn.";
+        if (Actor == null || Actor.dead) return "No living demo. Spawn one or wait for automatic respawn.";
         int type = kind switch { "slime" => NPCID.BlueSlime, "zombie" => NPCID.Zombie, "eye" => NPCID.DemonEye, _ => -1 };
         if (type < 0) return "Enemy must be slime, zombie or eye.";
         Vector2 bottom = Actor.Bottom + new Vector2(Actor.direction * 28, 0);
@@ -172,7 +172,18 @@ public sealed class DemoPlayerSystem : ModSystem
         deathCount++;
         Stop();
         RecordCombat(new { kind = "death", tick = Main.GameUpdateCount, victim = Actor!.whoAmI,
-            npc = reason.SourceNPCIndex, life = Actor.statLife, dead = Actor.dead });
+            npc = reason.SourceNPCIndex, life = Actor.statLife, dead = Actor.dead,
+            respawnTimer = Actor.respawnTimer });
+    }
+
+    internal void RecordRespawn()
+    {
+        respawnCount++;
+        Stop();
+        RecordCombat(new { kind = "respawn", tick = Main.GameUpdateCount, slot = Actor!.whoAmI,
+            life = Actor.statLife, dead = Actor.dead, item = Actor.HeldItem.type,
+            x = Actor.position.X, y = Actor.position.Y,
+            worldSpawnX = Main.spawnTileX, worldSpawnY = Main.spawnTileY });
     }
 
     private static void ClearInput(Player player)
@@ -246,11 +257,11 @@ public sealed class DemoPlayerSystem : ModSystem
         slot = Actor.whoAmI,
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
-        life = Actor.statLife, dead = Actor.dead,
+        life = Actor.statLife, dead = Actor.dead, respawnTimer = Actor.respawnTimer,
         moveTicks, jumpTicks, attackTicks,
         direction = Actor.direction, item = Actor.HeldItem.type,
         itemAnimation = Actor.itemAnimation, usingItem = Actor.controlUseItem,
-        hitCount, hurtCount, deathCount,
+        hitCount, hurtCount, deathCount, respawnCount,
         combatEvents = combatEvents.ToArray(),
         enemies = testEnemies.Select(n => new { slot = n.whoAmI, type = n.type,
             active = ReferenceEquals(Main.npc[n.whoAmI], n) && n.active,
@@ -265,9 +276,9 @@ public sealed class DemoPlayerSystem : ModSystem
             return "No demo. Use /tpa spawn.";
         return $"AI slot={Actor.whoAmI}, human={owner.whoAmI}, sameObject={ReferenceEquals(Actor, owner)}; " +
             $"pos=({Actor.position.X:F1},{Actor.position.Y:F1}), velocity=({Actor.velocity.X:F2},{Actor.velocity.Y:F2}); " +
-            $"life={Actor.statLife}/{Actor.statLifeMax2}, dead={Actor.dead}; " +
+            $"life={Actor.statLife}/{Actor.statLifeMax2}, dead={Actor.dead}, respawnTicks={Actor.respawnTimer}; " +
             $"moveTicks={moveTicks}, jumpTicks={jumpTicks}, attackTicks={attackTicks}, item={Actor.HeldItem.type}; " +
-            $"hits={hitCount}, hurts={hurtCount}, deaths={deathCount}, updates/tick={lastUpdates}, total={totalUpdates}.";
+            $"hits={hitCount}, hurts={hurtCount}, deaths={deathCount}, respawns={respawnCount}, updates/tick={lastUpdates}, total={totalUpdates}.";
     }
 
     public override void OnWorldUnload() => Remove();

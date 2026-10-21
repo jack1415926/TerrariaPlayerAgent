@@ -21,9 +21,9 @@ Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Sho
 
 ## 死亡与自动重生
 
-玩家死亡后自动重生是队友持续游玩的必要行为，已列为下一批优先任务。Wiki 入口：[Death](https://terraria.wiki.gg/wiki/Death)。具体倒计时、重生位置和物品规则在实现时按普通／软核角色及当前世界模式核对，不提前猜测固定秒数。
+玩家死亡后自动重生是队友持续游玩的必要行为，本批已接入。Wiki 入口：[Death](https://terraria.wiki.gg/wiki/Death)、[Spawn](https://terraria.wiki.gg/wiki/Spawn)、[Expert Mode](https://terraria.wiki.gg/wiki/Expert_Mode)。Wiki 的重生位置说明为有效床出生点或世界出生点；专家模式说明普通计时从 10 秒增加至 15 秒。本项目使用本机原生计时，不硬编码这些秒数。
 
-项目已知：AI 可被 NPC 接触伤害杀死；目前保持 dead 状态，没有自动复活。上批本机调查确认 `Player.UpdateDead` 的重生分支限制为本地玩家；额外 AI 槽位需要适配。remove → spawn 是创建新对象的开发操作，不等同于原角色复活。
+本机依据：`GetRespawnTime` 在普通单人世界给出 600 ticks；`UpdateDead` 对额外槽位也递减 respawnTimer，但实际 Spawn 分支限于本地玩家。本项目在原生 UpdateDead 后为 AI 补调重生，保留同一 Player 和背包。`Spawn(ReviveFromDeath)` 原生恢复生命、位置和出生保护，配合 FindSpawn / CheckSpawn 使用有效出生点，否则回世界出生点。当前 AI 没有设置床的入口，因此只验收世界出生点；中核／硬核和金币惩罚尚不在本批范围。remove → spawn 仍是创建新对象的开发操作，不等同于原角色复活。
 
 ## 维护方式
 

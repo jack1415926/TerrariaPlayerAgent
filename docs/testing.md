@@ -37,7 +37,13 @@ smoke-test.ps1 提示后有 3 秒切回游戏，再移除旧演示角色，生�
 
 快照 actor 增加 item、itemAnimation、attackTicks、usingItem、hitCount、hurtCount、deathCount、enemies 和 combatEvents。每次 spawn 重置计数，最多保留最近 64 条事件；日志同时记录 `[TPA] Combat`。item-hit 中 targetLifeAfter 是命中钩子中的 NPC 生命；hurt 中 lifeBefore 是原生扣血前生命，致死结果由 death 和最终快照确认。自然怪物也会出现在事件中，按 NPC 槽位筛选，不能拿其他怪物的命中当作测试目标通过。
 
-测试不直接调用 Hurt、KillMe 或扣血，不修改 NPC 属性、伤害倍率、刷怪、时间或暂停规则。原生怪物会移动、击退和攻击真人，测试需在近距离平地进行。AI 不会自主追敌，也不会自动重生；同一怪物的双向实测补充记录位于 `.local/test-results/combat-slime.json`。
+测试不直接调用 Hurt、KillMe 或扣血，不修改 NPC 属性、伤害倍率、刷怪、时间或暂停规则。原生怪物会移动、击退和攻击真人，测试需在近距离平地进行。AI 不会自主追敌；普通／软核 AI 现已支持自动重生。同一怪物的双向实测补充记录位于 `.local/test-results/combat-slime.json`。
+
+## 自动重生选项（2026-10-21）
+
+`.\scripts\smoke-test.ps1 -Respawn` 只运行本批相关场景，不重跑移动及三种敌人的完整检查。测试发放铁阔剑后，让 AI 走向原生僵尸以保持接触（白天僵尸会走开），待死亡后清理测试敌人，等原生倒计时结束自动重生；检查角色槽位和死亡记录延续、武器保留、旧动作清空、恢复移动及原生挥剑，再次死亡后 remove 并等待原计时结束，确认角色没有重新出现。`-Respawn` 与 `-Combat` 同时传入时优先执行重生场景。
+
+快照增加 respawnTimer 和 respawnCount。death 事件记录原生初始倒计时，respawn 事件记录游戏 tick、槽位、恢复生命、保留武器、重生位置及世界出生点；本机普通世界实测计时和位置见 validation.md。报告仍在 `.local/test-results/smoke-日期时间.json`。
 
 ## 测试入口的工作方式
 
