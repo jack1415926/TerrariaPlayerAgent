@@ -2,6 +2,8 @@
 
 目标是克隆源码后构建、启动独立测试配置并继续开发。仓库不包含游戏本体、SDK、API密钥、旧电脑的角色／世界或原始测试报告；这些需要在新电脑准备。
 
+只做公司电脑离线开发时，先看第5节与[TODO](../TODO.md)：克隆源码后可先做Python／Mock工作，下方游戏安装、启动和凭据配置按实际需要准备，不是离线开工前置。
+
 ## 1. 安装依赖
 
 - Git、PowerShell 7。
@@ -67,8 +69,10 @@ notepad .env
 
 ## 5. 继续开发时的入口
 
-先读README、TODO、docs/development-experience.md；已通过能力和边界见docs/milestone-acceptance.md。当前下一批为失焦任务连续性，其后是近敌快速反应、拾取入包。
+先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；已通过能力和边界见docs/milestone-acceptance.md。按TODO逐批完成P0中断与安全恢复基础、P1持续宿主及游戏内目标收发、P2动态切换与恢复整合；个人电脑集中游戏验收后再推进P3近敌反应、P4原生拾取。
+
+**公司电脑只做离线开发时，不要求启动Steam或游戏、准备角色／世界或API密钥。** Python标准库即可运行现有检查：`python -B -m unittest discover -s agent -p test_run.py -v`；新增检查沿用本地Mock和临时目录。C#构建仍需.NET 8 SDK及匹配的tModLoader文件，没有这些依赖时将构建标为待验证。真实DeepSeek按需少量检查模拟状态下的工具调用，不以此证明游戏动作成功；详细分工和集中验收清单以TODO为准。
 
 只改提示词、Python Agent或文档可复用运行中的游戏；改C#需重新构建并加载。打包遇到tmod占用按docs/debugging.md处理，不把旧代码画面当作新功能。新机首次只需确认构建、模组加载和一条实际动作能工作，不必先重跑全部历史检查。
 
-这是新机安装说明，不是已经在另一台实体电脑验证通过的声明；本次交付只检查干净源码目录能使用显式游戏路径构建，游戏／API需要在新机完成本地准备。
+这是新机安装说明，不是已经在另一台实体电脑验证通过的声明。此前已有干净源码目录使用显式游戏路径构建的检查；2026-11-09只同步离线开发路线，未新增游戏／API或构建验证。游戏／API需要在实际验收电脑完成本地准备。
