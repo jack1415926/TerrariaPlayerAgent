@@ -1,0 +1,74 @@
+# Windows新电脑接续开发
+
+目标是克隆源码后构建、启动独立测试配置并继续开发。仓库不包含游戏本体、SDK、API密钥、旧电脑的角色／世界或原始测试报告；这些需要在新电脑准备。
+
+## 1. 安装依赖
+
+- Git、PowerShell 7。
+- .NET **8 SDK**，不是只有运行时。`global.json`指定8.0.426并允许兼容的较新8.0版本；只安装.NET 9／10不会替代所需的8 SDK。
+- Python 3.12，本项目Agent只用标准库，不需要安装pip依赖。
+- Steam、合法安装的Terraria和tModLoader；启动游戏时Steam须运行且已登录。
+
+当前游戏机制和IL适配的验收版本为 **Terraria 1.4.4.9／tModLoader 2026.08.3.0**。优先在新机准备相同版本，可保留旧机安装文件作个人迁移，游戏文件不要提交仓库。若Steam安装了更新版本，需要先按新版本检查原生归属钩子；不能保证旧版本适配在新游戏版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题。
+
+## 2. 克隆并构建
+
+在PowerShell 7中运行（仓库放在哪个盘都可以）：
+
+```powershell
+git clone https://github.com/jack1415926/TerrariaPlayerAgent.git
+Set-Location TerrariaPlayerAgent
+
+# 改成新电脑的实际tModLoader目录，里面应有tMLMod.targets和tModLoader.dll。
+$tml = 'C:\Program Files (x86)\Steam\steamapps\common\tModLoader'
+.\scripts\build.ps1 -TmlPath $tml
+.\scripts\play.ps1 -TmlPath $tml
+```
+
+不需要把源码复制到ModSources，也不需要将新电脑改成旧电脑的F盘路径。脚本默认路径是旧开发机约定，新机显式传`-TmlPath`即可；换一个PowerShell会话后需重新设置`$tml`或直接传目录。
+
+如果GitHub网络不通，按新电脑实际代理配置处理，不盲抄旧机7890端口，也不设置全局Git代理。若PowerShell提示脚本策略阻止，按该电脑的脚本执行策略处理；项目不会自动更改系统策略。
+
+## 3. 准备独立测试世界
+
+首次启动在项目的`.local/tModLoader`中创建专用本地角色和普通小世界。不要选择Steam云列表里的正式存档。旧机的`t`／“放松苔原”没有上传，新机不需要同名或相同种子才能继续开发。
+
+进入世界后逐条输入：
+
+```text
+/tpa spawn
+/tpa equip wood
+/tpa equip pick
+/tpa select 0
+```
+
+这是一套测试起始物资，不是普通角色默认装备。`play.ps1`已启用开发JSON入口；手动从Steam直接启动不一定有该入口。
+
+若确实需要接着使用旧测试世界，可自行把旧机`.local/tModLoader/Players`和`Worlds`拷到新机对应目录；不要直接同步整份`.local`、旧的DLL／tmod或凭据。这一步可选，不是构建前置。
+
+## 4. 配置自己的API并运行
+
+仅首次缺少配置时复制模板：
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
+```
+
+在本机`.env`填写`TPA_API_KEY`；其余TPA_变量按模板和实际服务配置。密钥通过可信方式私下准备，不能通过公开Git仓库转移。`.env`已被忽略，不要强制加入Git。
+
+保持游戏在前台，运行：
+
+```powershell
+.\scripts\run-agent.ps1 -GoalFile agent/prompts/explore.md -MaxTurns 12
+```
+
+游戏中`/tpa stop`或另一个PowerShell运行`.\scripts\run-agent.ps1 -Stop`可取消任务。失焦后台运行尚未解决，不能用“切回聊天后超时”认定新机安装失败；恢复焦点后先看状态。
+
+## 5. 继续开发时的入口
+
+先读README、TODO、docs/development-experience.md；已通过能力和边界见docs/milestone-acceptance.md。当前下一批为失焦任务连续性，其后是近敌快速反应、拾取入包。
+
+只改提示词、Python Agent或文档可复用运行中的游戏；改C#需重新构建并加载。打包遇到tmod占用按docs/debugging.md处理，不把旧代码画面当作新功能。新机首次只需确认构建、模组加载和一条实际动作能工作，不必先重跑全部历史检查。
+
+这是新机安装说明，不是已经在另一台实体电脑验证通过的声明；本次交付只检查干净源码目录能使用显式游戏路径构建，游戏／API需要在新机完成本地准备。

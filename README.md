@@ -23,6 +23,8 @@
 
 ## 开始体验
 
+**换电脑继续开发：先看 [Windows新机接续步骤](docs/new-machine-setup.md)。** 新机通过`-TmlPath`指定自己的游戏安装目录，无需沿用旧机F盘路径；旧存档和密钥不在仓库内。
+
 本机 PowerShell 7：
 
 ```powershell
