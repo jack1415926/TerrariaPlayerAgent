@@ -1,4 +1,4 @@
-param([string]$Goal, [string]$GoalFile, [int]$MaxTurns = 0, [switch]$CheckApi)
+param([string]$Goal, [string]$GoalFile, [int]$MaxTurns = 0, [switch]$CheckApi, [switch]$Stop)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $environmentFile = Join-Path $projectRoot '.env'
@@ -15,6 +15,7 @@ if (Test-Path -LiteralPath $environmentFile) {
 $env:PYTHONIOENCODING = 'utf-8'
 $agentArguments = @('-u', (Join-Path $projectRoot 'agent/run.py'))
 if ($CheckApi) { $agentArguments += '--check-api' }
+if ($Stop) { $agentArguments += '--stop' }
 if ($Goal) { $agentArguments += @('--goal', $Goal) }
 if ($GoalFile) { $agentArguments += @('--goal-file', $GoalFile) }
 if ($MaxTurns -gt 0) { $agentArguments += @('--max-turns', $MaxTurns) }

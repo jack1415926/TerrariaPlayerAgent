@@ -63,7 +63,7 @@ public sealed class NativeCombat : ModSystem
             throw new InvalidOperationException($"TPA combat owner check missing in {il.Method.Name}; recheck the tML version.");
         cursor.Emit(OpCodes.Ldarg_0);
         cursor.EmitDelegate<Func<int, Player, int>>((owner, player) =>
-            IsActor(player) && (!swordOnly || player.HeldItem.type is ItemID.WoodenSword or ItemID.IronBroadsword)
+            IsActor(player) && (!swordOnly || player.HeldItem.type is ItemID.WoodenSword or ItemID.IronBroadsword || NativeMining.Active(player))
                 ? player.whoAmI : owner);
     }
 }

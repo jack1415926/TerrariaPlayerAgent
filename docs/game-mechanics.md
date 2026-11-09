@@ -4,7 +4,21 @@
 
 这是随开发按需补充的小型资料笔记。玩法优先查 [Official Terraria Wiki](https://terraria.wiki.gg/)，代码接入以本机版本和项目实际行为为准；不凭印象填写数值，不预先抓取全站或建设数据库。Wiki 新版本规则不直接当成本机旧版本规则。
 
+## 移动与局部地形（2026-10-22）
+
+按键组合由原生 Player 物理处理，方向跑跳同时设置水平输入和跳跃，不直接改坐标。局部支撑与障碍复用 Collision.SolidCollision，脚下探测使用 acceptTopSurfaces=true 以包含平台；接口签名对照 [tML 2026.08 Collision 文档](https://docs.tmodloader.net/docs/stable/class_collision.html)，并由本机编译和地形实测确认接入。
+
+[Official Terraria Wiki 的平台说明](https://terraria.wiki.gg/wiki/Platforms)记载站在平台上按 Down 可下落。本项目 down 接入原生 controlDown，默认 0.25 秒，不改碰撞或位置；目前尚未完成站在平台上的正向实测。向下输入不能解释成穿过实心地面。地形字符网格只是碰撞概览，液体种类和未知区域不作安全推断。
+
 ## 初始武器与测试武器
+
+原失败点(2103,295)的现场检查为Grass，上方(2103,294)是Trees，isTreeTrunk=true、frameX=0、frameY=132，CanKillTile=false。本机WorldGen.CanKillTile的树干支撑分支返回false；Player.PickTile随后将本次挖掘伤害置0，因此会按冷却挥镐但既不变泥土也不移除。该规则也见 [Official Terraria Wiki 方块说明](https://terraria.wiki.gg/wiki/Block)，API见 [WorldGen文档](https://docs.tmodloader.net/docs/stable/class_world_gen.html)。修复遵守该规则，未强制移除树或支撑。
+
+2026-10-22 新增 `/tpa equip pick`，向AI slot1发放测试铜镐（CopperPickaxe，item=3509，pick=35），保留slot0原有测试剑。这仍不是建角时自动发初始装备。
+
+普通挥动镐接入本机 `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile`；前两层跳过额外玩家槽位的归属检查作有限适配。工具目标 `Player.tileTargetX/Y` 是共享静态字段，只在本次原生范围检查和挖掘方法调用内替换，并用 finally 恢复；不切换 Main.myPlayer，不写真人鼠标位置。`IsTargetTileInItemRange` 和 `PickTile` 签名见 [tML Player 文档](https://docs.tmodloader.net/docs/stable/class_player.html)，本机IL摘录保存在被Git忽略的 `.local/research`。
+
+本次原生铜镐实测同一草地方块先从type2变为type0泥土，15ticks后才真正移除。仅看到类型变化不能当作挖掉；拾取仍需背包证据。
 
 | 名称 | 本机 ItemID | 项目实际用途与状态 |
 | --- | --- | --- |

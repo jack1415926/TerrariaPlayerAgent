@@ -38,7 +38,14 @@ public sealed class LocalTestBridge : ModSystem
     {
         if (directory.Length == 0) return;
         if (++pollTicks % 3 != 0) return;
-        string path = Path.Combine(directory, "request.json");
+        // Stop has its own mailbox so it cannot be blocked by an Agent status/action request.
+        ProcessRequest("stop.json", true);
+        ProcessRequest("request.json", false);
+    }
+
+    private void ProcessRequest(string filename, bool stopOnly)
+    {
+        string path = Path.Combine(directory, filename);
         if (!File.Exists(path)) return;
 
         string id = "";
@@ -50,8 +57,19 @@ public sealed class LocalTestBridge : ModSystem
             id = request.id;
             if (!Guid.TryParse(id, out _) || request.command.Length > 200)
                 throw new InvalidDataException("Invalid request id or command.");
+            if (stopOnly && request.command.Trim() != "/tpa stop")
+                throw new InvalidDataException("The stop mailbox only accepts /tpa stop.");
+            if (request.expectedStopRevision is long expected &&
+                expected != ModContent.GetInstance<DemoPlayerSystem>().StopRevision)
+            {
+                Respond(id, new { id, ok = true, accepted = false, interrupted = true,
+                    reply = "Task cancelled by a newer stop/remove. No command executed.", state = Snapshot() });
+                return;
+            }
             string reply = Execute(request.command.Trim());
-            Respond(id, new { id, ok = true, reply, state = Snapshot() });
+            bool accepted = !request.command.Trim().StartsWith("/tpa ", StringComparison.Ordinal) ||
+                ModContent.GetInstance<DemoCommand>().LastAccepted;
+            Respond(id, new { id, ok = true, accepted, reply, state = Snapshot() });
         }
         catch (Exception ex)
         {
@@ -91,7 +109,10 @@ public sealed class LocalTestBridge : ModSystem
             return "Queued the fixed status command for native chat submission.";
         }
         string[] tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        string[] allowed = { "spawn", "left", "right", "jump", "stop", "status", "remove", "equip", "enemy", "clear-enemies", "attack" };
+        if (tokens.Length == 3 && tokens[0] == "tile" && int.TryParse(tokens[1], out int tileX) &&
+            int.TryParse(tokens[2], out int tileY))
+            return JsonSerializer.Serialize(NativeMining.Inspect(tileX, tileY));
+        string[] allowed = { "spawn", "left", "right", "jump", "down", "stop", "status", "remove", "equip", "enemy", "clear-enemies", "attack", "select", "mine", "goto", "home", "range" };
         if (tokens.Length < 2 || tokens[0] != "/tpa" || !allowed.Contains(tokens[1]))
             throw new InvalidOperationException("Only /tpa demo commands and documented diagnostics are allowed.");
         var caller = new TestCaller(Main.LocalPlayer);
@@ -105,6 +126,7 @@ public sealed class LocalTestBridge : ModSystem
         netMode = Main.netMode,
         paused = Main.gamePaused,
         tick = Main.GameUpdateCount,
+        stopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision,
         input = ModContent.GetInstance<EnterDiagnostics>().Snapshot(),
         chatProbe = new
         {
@@ -133,7 +155,7 @@ public sealed class LocalTestBridge : ModSystem
         File.Move(temporary, Path.Combine(directory, $"response-{id}.json"), true);
     }
 
-    private sealed record Request(string id, string command);
+    private sealed record Request(string id, string command, long? expectedStopRevision = null);
 
     private sealed class TestCaller(Player player) : CommandCaller
     {

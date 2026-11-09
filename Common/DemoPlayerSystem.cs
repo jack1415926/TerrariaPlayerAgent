@@ -12,11 +12,16 @@ namespace TerrariaPlayerAgent.Common;
 public sealed class DemoPlayerSystem : ModSystem
 {
     internal Player? Actor { get; private set; }
+    internal long StopRevision { get; private set; }
     private Player? previousSlot;
     private int moveDirection;
     private int moveTicks;
     private int jumpTicks;
     private int autoJumpCount;
+    private int dropTicks, stalledTicks, recoveryJumps;
+    private float progressX;
+    private string blockedReason = "";
+    private readonly GroundNavigation navigation = new();
     private int updatesThisTick;
     private int lastUpdates;
     private long totalUpdates;
@@ -59,6 +64,8 @@ public sealed class DemoPlayerSystem : ModSystem
         actor.fallStart = actor.fallStart2 = (int)(actor.position.Y / 16);
         previousSlot = Main.player[slot];
         Actor = actor;
+        navigation.Clear();
+        ModContent.GetInstance<NativeMining>().Reset();
         Main.player[slot] = actor;
         totalUpdates = 0;
         lastUpdates = 0;
@@ -91,19 +98,60 @@ public sealed class DemoPlayerSystem : ModSystem
         Stop();
         moveDirection = direction;
         moveTicks = ticks;
+        progressX = Actor?.position.X ?? 0;
+    }
+
+    internal bool SetRange(int tiles)
+    {
+        if (Actor == null || Actor.dead || tiles < 0 || tiles > 100) return false;
+        RequestStop();
+        navigation.SetRange(Actor, tiles);
+        return true;
+    }
+
+    internal bool MoveTo(float? x, int ticks, out string message)
+    {
+        message = "No living AI, or home requires an activity range first.";
+        if (Actor == null || Actor.dead || (!x.HasValue && !navigation.Bounded)) return false;
+        float goal = x ?? navigation.HomeX;
+        string? invalid = navigation.Validate(Actor, goal);
+        if (invalid != null) { message = invalid; return false; }
+        Stop();
+        navigation.Start(Actor, goal);
+        moveTicks = ticks;
+        progressX = Actor.position.X;
+        message = $"Moving toward world pixel X={goal:F2}, tolerance={GroundNavigation.Tolerance}, at most {ticks / 60.0:F2} simulation seconds.";
+        return true;
     }
 
     internal void Jump()
     {
-        Stop();
+        attackTicks = dropTicks = 0;
+        blockedReason = "";
+        stalledTicks = recoveryJumps = 0;
         jumpTicks = 12;
+    }
+
+    internal void Drop(int ticks)
+    {
+        Stop();
+        dropTicks = ticks;
     }
 
     internal void Stop()
     {
-        moveTicks = jumpTicks = moveDirection = attackTicks = 0;
+        ModContent.GetInstance<NativeMining>().Cancel();
+        navigation.Cancel();
+        moveTicks = jumpTicks = moveDirection = attackTicks = dropTicks = stalledTicks = recoveryJumps = 0;
+        blockedReason = "";
         if (Actor != null)
             ClearInput(Actor);
+    }
+
+    internal void RequestStop()
+    {
+        StopRevision++;
+        Stop();
     }
 
     internal void Attack(int direction, int ticks)
@@ -116,13 +164,24 @@ public sealed class DemoPlayerSystem : ModSystem
     internal string Equip(string weapon)
     {
         if (Actor == null || Actor.dead) return "No living demo. Spawn one or wait for automatic respawn.";
-        int type = weapon switch { "wood" => ItemID.WoodenSword, "iron" => ItemID.IronBroadsword, _ => 0 };
-        if (type == 0) return "Weapon must be wood or iron.";
+        int type = weapon switch { "wood" => ItemID.WoodenSword, "iron" => ItemID.IronBroadsword,
+            "pick" => ItemID.CopperPickaxe, _ => 0 };
+        if (type == 0) return "Equipment must be wood, iron or pick.";
         Stop();
-        Actor.inventory[0].SetDefaults(type);
-        Actor.selectedItem = 0;
+        int slot = weapon == "pick" ? 1 : 0;
+        Actor.inventory[slot].SetDefaults(type);
+        Actor.selectedItem = slot;
         Actor.releaseUseItem = true;
         return $"Equipped vanilla {Actor.HeldItem.Name} (item={type}, damage={Actor.HeldItem.damage}).";
+    }
+
+    internal bool SelectItem(int slot)
+    {
+        if (Actor == null || Actor.dead || slot < 0 || slot >= 50 || Actor.inventory[slot].IsAir) return false;
+        Stop();
+        Actor.selectedItem = slot;
+        Actor.releaseUseItem = true;
+        return true;
     }
 
     internal string SpawnEnemy(string kind)
@@ -198,7 +257,7 @@ public sealed class DemoPlayerSystem : ModSystem
 
     internal void Remove()
     {
-        Stop();
+        RequestStop();
         ClearEnemies();
         if (Actor == null)
             return;
@@ -209,6 +268,7 @@ public sealed class DemoPlayerSystem : ModSystem
         Mod.Logger.Info($"[TPA] Removed slot={slot}, updates={totalUpdates}");
         Actor = null;
         previousSlot = null;
+        navigation.Clear();
     }
 
     public override void PreUpdatePlayers()
@@ -227,15 +287,35 @@ public sealed class DemoPlayerSystem : ModSystem
             Stop();
             return;
         }
+        if (navigation.Active)
+        {
+            if (moveTicks == 0)
+            {
+                navigation.Finish("timeout", "target_move_time_limit");
+                blockedReason = "target_move_time_limit";
+            }
+            else moveDirection = navigation.Direction(Actor);
+            if (!navigation.Active) moveTicks = jumpTicks = 0;
+        }
+        if (moveTicks > 0 && navigation.AtOutwardBoundary(Actor, moveDirection, navigation.Active))
+        {
+            navigation.Finish("blocked", "activity_boundary");
+            blockedReason = "activity_boundary";
+            moveTicks = jumpTicks = 0;
+        }
+        if (moveTicks > 0 && moveDirection != 0) AdjustMovement(Actor);
         Actor.controlLeft = moveTicks > 0 && moveDirection < 0;
         Actor.controlRight = moveTicks > 0 && moveDirection > 0;
-        if (moveTicks > 0 && jumpTicks == 0 && ShouldJumpObstacle(Actor, moveDirection))
+        if (moveTicks > 0 && jumpTicks == 0 && LocalTerrain.Grounded(Actor) &&
+            Actor.releaseJump && LocalTerrain.CanJumpObstacle(Actor, moveDirection))
         {
             jumpTicks = 12;
             autoJumpCount++;
             Mod.Logger.Info($"[TPA] AutoJump tick={Main.GameUpdateCount}, direction={moveDirection}, position={Actor.position}");
         }
         Actor.controlJump = jumpTicks > 0;
+        Actor.controlDown = dropTicks > 0;
+        ModContent.GetInstance<NativeMining>().PrepareInput(Actor);
         if (attackTicks > 0)
         {
             Actor.direction = attackDirection;
@@ -246,25 +326,31 @@ public sealed class DemoPlayerSystem : ModSystem
         }
         if (moveTicks > 0) moveTicks--;
         if (jumpTicks > 0) jumpTicks--;
+        if (dropTicks > 0) dropTicks--;
         // The engine updates and draws this occupied slot. Do not call Player.Update again.
     }
 
-    private static bool ShouldJumpObstacle(Player player, int direction)
+    private void AdjustMovement(Player player)
     {
-        if (player.velocity.Y != 0 || player.gravDir != 1 || !player.releaseJump ||
-            !Collision.SolidCollision(player.position + new Vector2(0, 2), player.width, player.height))
-            return false;
-        Vector2 ahead = player.position + new Vector2(direction * 16, 0);
-        if (!Collision.SolidCollision(ahead, player.width, player.height))
-            return false;
-        for (int rise = 16; rise <= 64; rise += 16)
+        if ((player.position.X - progressX) * moveDirection > 4)
         {
-            // Keep the vertical path clear; jumping cannot solve a tall wall or low ceiling.
-            if (!Collision.SolidCollision(ahead - new Vector2(0, rise), player.width, player.height) &&
-                !Collision.SolidCollision(player.position - new Vector2(0, rise), player.width, player.height + rise))
-                return true;
+            progressX = player.position.X;
+            stalledTicks = 0;
         }
-        return false;
+        else stalledTicks++;
+        if (stalledTicks < 45 || !LocalTerrain.Grounded(player) || !player.releaseJump) return;
+        if (recoveryJumps < 2 && LocalTerrain.HeadClear(player))
+        {
+            jumpTicks = 18;
+            recoveryJumps++;
+            stalledTicks = 0;
+            Mod.Logger.Info($"[TPA] MovementRecovery tick={Main.GameUpdateCount}, attempt={recoveryJumps}, position={player.position}");
+            return;
+        }
+        blockedReason = LocalTerrain.HeadClear(player) ? "no_progress_after_jump_attempts" : "blocked_with_low_ceiling";
+        if (navigation.Active) navigation.Finish("blocked", blockedReason);
+        moveTicks = jumpTicks = 0;
+        Mod.Logger.Info($"[TPA] MovementBlocked tick={Main.GameUpdateCount}, reason={blockedReason}, position={player.position}");
     }
 
     internal void RecordUpdate(Player player)
@@ -284,7 +370,25 @@ public sealed class DemoPlayerSystem : ModSystem
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
         life = Actor.statLife, dead = Actor.dead, respawnTimer = Actor.respawnTimer,
-        moveTicks, jumpTicks, attackTicks, autoJumpCount,
+        moveTicks, jumpTicks, attackTicks, dropTicks, autoJumpCount, recoveryJumps, blockedReason,
+        navigation = navigation.Snapshot(Actor),
+        terrain = LocalTerrain.Observe(Actor),
+        mining = ModContent.GetInstance<NativeMining>().Snapshot(),
+        mineCandidates = NativeMining.Candidates(Actor),
+        mineTicks = ModContent.GetInstance<NativeMining>().Ticks,
+        selectedSlot = Actor.selectedItem,
+        nearbyHostiles = Main.npc.Where(n => n.active && !n.friendly && n.life > 0 && n.damage > 0 &&
+                Vector2.DistanceSquared(n.Center, Actor.Center) <= 480 * 480)
+            .OrderBy(n => Vector2.DistanceSquared(n.Center, Actor.Center)).Take(8)
+            .Select(n => new { slot = n.whoAmI, type = n.type, name = n.FullName,
+                x = n.position.X, y = n.position.Y, width = n.width, height = n.height,
+                dx = n.Center.X - Actor.Center.X, dy = n.Center.Y - Actor.Center.Y,
+                distancePixels = Vector2.Distance(n.Center, Actor.Center),
+                velocityX = n.velocity.X, velocityY = n.velocity.Y, life = n.life,
+                contactDamage = n.damage, touching = n.Hitbox.Intersects(Actor.Hitbox) }).ToArray(),
+        inventory = Actor.inventory.Take(50).Select((item, slot) => new { slot, item })
+            .Where(entry => !entry.item.IsAir).Select(entry => new { entry.slot, type = entry.item.type,
+                name = entry.item.Name, stack = entry.item.stack, pick = entry.item.pick, shoot = entry.item.shoot }).ToArray(),
         direction = Actor.direction, item = Actor.HeldItem.type,
         itemAnimation = Actor.itemAnimation, usingItem = Actor.controlUseItem,
         hitCount, hurtCount, deathCount, respawnCount,
