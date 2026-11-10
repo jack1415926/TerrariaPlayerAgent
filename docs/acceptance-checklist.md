@@ -83,6 +83,6 @@ python -B -m unittest discover -s agent -p test_run.py -v
 
 ## 本轮离线证据（2026-11-10）
 
-- `python -B -m unittest discover -s agent -p test_run.py`：48 项通过（本轮新增 10 项：stop 后目标失效、跨会话目标失效、暂停拒绝、A/B/C 只留最新、remove／退世界中断、心跳字段等）。
+- `python -B -m unittest discover -s agent -p test_run.py`：48 项通过（本轮新增 7 项：stop 后目标失效、跨会话目标失效、暂停拒绝、A/B/C 只留最新、remove 中断、退世界中断、心跳字段）。
 - C# 编译打包：0 警告 0 错误，`TerrariaPlayerAgent.tmod` 87.7 KB（在无临时目录冲突的干净副本中构建）。
 - 未启动游戏，未调用真实 API；所有游戏内行为仍属“游戏待验”。
