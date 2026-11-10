@@ -1,0 +1,184 @@
+using System;
+using System.IO;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+using Terraria.Chat;
+using Terraria.Localization;
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
+
+namespace TerrariaPlayerAgent.Common;
+
+// Disposable test-world probe. This is not a network-connected vanilla client.
+public sealed class MultiplayerProbe : ModSystem
+{
+    private const byte RequestKind = 1, StateKind = 2, ReplyKind = 3;
+    private int controller = -1, mirrorSlot = -1;
+    private Player? mirror, previous;
+    private DemoPlayerSystem Demo => ModContent.GetInstance<DemoPlayerSystem>();
+
+    public override void Load()
+    {
+        IL_Netplay.UpdateConnectedClients += PreserveVirtualSlot;
+        On_ChatHelper.SendChatMessageToClient += SendChat;
+    }
+
+    public override void Unload()
+    {
+        IL_Netplay.UpdateConnectedClients -= PreserveVirtualSlot;
+        On_ChatHelper.SendChatMessageToClient -= SendChat;
+    }
+
+    private void PreserveVirtualSlot(ILContext il)
+    {
+        var cursor = new ILCursor(il);
+        // Skip only the unconnected-slot cleanup. Never toggle active across threads.
+        if (!cursor.TryGotoNext(MoveType.Before,
+            i => i.MatchLdsfld<Main>(nameof(Main.player)),
+            i => i.MatchLdloc(1),
+            i => i.OpCode == OpCodes.Ldelem_Ref,
+            i => i.MatchLdfld<Entity>(nameof(Entity.active)),
+            i => i.MatchLdsfld<Main>(nameof(Main.player)),
+            i => i.MatchLdloc(1),
+            i => i.OpCode == OpCodes.Ldelem_Ref,
+            i => i.MatchLdcI4(0),
+            i => i.MatchStfld<Entity>(nameof(Entity.active))))
+            throw new InvalidOperationException("TPA virtual slot cleanup pattern missing; recheck tML version.");
+        var branch = il.Instrs[cursor.Index + 9];
+        // MonoMod converts branch operands to ILLabel while invoking manipulators.
+        if (branch.OpCode.FlowControl != FlowControl.Cond_Branch || branch.Operand is not ILLabel end)
+            throw new InvalidOperationException("TPA virtual slot cleanup exit missing; recheck tML version.");
+        cursor.Emit(OpCodes.Ldloc, il.Body.Variables[1]);
+        cursor.EmitDelegate<Func<int, bool>>(slot => Main.netMode == NetmodeID.Server &&
+            Demo.Actor is { } actor && actor.whoAmI == slot &&
+            ReferenceEquals(Main.player[slot], actor) && Netplay.Clients[slot].State == 0);
+        cursor.Emit(OpCodes.Brtrue, end);
+    }
+
+    private void SendChat(On_ChatHelper.orig_SendChatMessageToClient orig, NetworkText text, Color color, int playerId)
+    {
+        if (Main.netMode == NetmodeID.Server && Demo.Actor?.whoAmI == playerId &&
+            Netplay.Clients[playerId].State == 0) return;
+        orig(text, color, playerId);
+    }
+
+    internal void Request(string action, int value = 0)
+    {
+        var packet = Mod.GetPacket();
+        packet.Write(RequestKind);
+        packet.Write(action);
+        packet.Write(value);
+        packet.Send();
+    }
+
+    internal void Receive(BinaryReader reader, int sender)
+    {
+        byte kind = reader.ReadByte();
+        if (Main.netMode == NetmodeID.Server && kind == RequestKind)
+        {
+            string action = reader.ReadString();
+            int value = reader.ReadInt32();
+            if (sender < 0 || sender >= Main.maxPlayers || !Main.player[sender].active) return;
+            Mod.Logger.Info($"[TPA-MP] request sender={sender}, action={action}, value={value}");
+            string reply;
+            if (action == "status")
+                reply = Demo.Status(Main.player[sender]);
+            else if (controller >= 0 && controller != sender)
+                reply = "Only the player who spawned this probe can control it.";
+            else if (action == "spawn")
+            {
+                reply = Demo.Spawn(Main.player[sender]);
+                if (Demo.Actor != null) controller = sender;
+            }
+            else if (action == "remove")
+            {
+                Demo.Remove(); controller = -1; reply = "Probe removed.";
+            }
+            else if (Demo.Actor == null) reply = "Use /tpamp spawn first.";
+            else if (action == "stop") { Demo.RequestStop(); reply = "Probe stopped."; }
+            else if (action == "team" && value is >= 0 and <= 5)
+            {
+                Demo.Actor.team = value; reply = $"Probe team={value}.";
+            }
+            else if ((action is "left" or "right") && value is >= 1 and <= 10)
+            {
+                Demo.Move(action == "left" ? -1 : 1, value * 60);
+                reply = $"Probe moving {action} for {value}s.";
+            }
+            else reply = "Invalid probe command.";
+            SendState();
+            Mod.Logger.Info($"[TPA-MP] reply sender={sender}, result={reply}");
+            var response = Mod.GetPacket(); response.Write(ReplyKind); response.Write(reply); response.Send(sender);
+        }
+        else if (Main.netMode == NetmodeID.MultiplayerClient && kind == StateKind)
+        {
+            int slot = reader.ReadInt16();
+            if (slot == -1) { ClearMirror(); return; }
+            var position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+            var velocity = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+            int direction = reader.ReadSByte(), team = reader.ReadByte(), life = reader.ReadInt32();
+            if (slot < 0 || slot >= Main.maxPlayers || slot == Main.myPlayer) return;
+            if (mirrorSlot != slot) ClearMirror();
+            if (mirror == null)
+            {
+                // Never replace an existing real player on this client.
+                if (Main.player[slot].active) return;
+                previous = Main.player[slot];
+                mirror = new Player { whoAmI = slot, name = "Agent MP Probe", active = true };
+                mirrorSlot = slot;
+                Main.player[slot] = mirror;
+            }
+            if (!ReferenceEquals(Main.player[slot], mirror)) { ClearMirror(); return; }
+            mirror.position = position; mirror.velocity = velocity;
+            mirror.direction = direction; mirror.team = team;
+            mirror.statLife = life; mirror.dead = life <= 0;
+        }
+        else if (Main.netMode == NetmodeID.MultiplayerClient && kind == ReplyKind)
+            Main.NewText(reader.ReadString(), Color.LightBlue);
+    }
+
+    public override void PreUpdatePlayers()
+    {
+        if (Main.netMode != NetmodeID.Server || controller < 0) return;
+        // Yield if a real connection claims the unreserved slot. Never kick a client.
+        if (!Main.player[controller].active || Demo.Actor != null &&
+            Netplay.Clients[Demo.Actor.whoAmI].State != 0)
+        {
+            Demo.Remove(); controller = -1; SendState();
+        }
+    }
+
+    public override void PostUpdatePlayers()
+    {
+        if (Main.netMode == NetmodeID.Server && controller >= 0 && Main.GameUpdateCount % 6 == 0)
+            SendState();
+    }
+
+    private void SendState()
+    {
+        var packet = Mod.GetPacket(); packet.Write(StateKind);
+        var actor = Demo.Actor;
+        packet.Write((short)(actor?.whoAmI ?? -1));
+        if (actor != null)
+        {
+            packet.Write(actor.position.X); packet.Write(actor.position.Y);
+            packet.Write(actor.velocity.X); packet.Write(actor.velocity.Y);
+            packet.Write((sbyte)actor.direction); packet.Write((byte)actor.team); packet.Write(actor.statLife);
+        }
+        packet.Send();
+    }
+
+    private void ClearMirror()
+    {
+        if (mirror != null && mirrorSlot >= 0 && ReferenceEquals(Main.player[mirrorSlot], mirror))
+        {
+            mirror.active = false;
+            if (previous != null) Main.player[mirrorSlot] = previous;
+        }
+        mirror = previous = null; mirrorSlot = -1;
+    }
+
+    public override void OnWorldUnload() { ClearMirror(); controller = -1; }
+}

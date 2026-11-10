@@ -27,6 +27,8 @@ public sealed class DemoPlayerSystem : ModSystem
     private long totalUpdates;
     private int attackTicks;
     private int attackDirection;
+    private int movementProbeTicks;
+    private float movementProbeStartX;
     private readonly List<object> combatEvents = new();
     private readonly List<NPC> testEnemies = new();
     private int hitCount, hurtCount, deathCount, respawnCount;
@@ -36,7 +38,14 @@ public sealed class DemoPlayerSystem : ModSystem
         if (Actor != null)
             return "Demo already exists. Use /tpa status or /tpa remove.";
 
-        int slot = Array.FindIndex(Main.player, 0, Main.maxPlayers,
+        int slot = -1;
+        if (Main.netMode == NetmodeID.Server)
+        {
+            for (int i = Main.maxPlayers - 1; i >= 0; i--)
+                if (!Main.player[i].active && Netplay.Clients[i].State == 0)
+                { slot = i; break; }
+        }
+        else slot = Array.FindIndex(Main.player, 0, Main.maxPlayers,
             p => !p.active && !ReferenceEquals(p, owner));
         if (slot < 0)
             return "No free player slot.";
@@ -99,6 +108,12 @@ public sealed class DemoPlayerSystem : ModSystem
         moveDirection = direction;
         moveTicks = ticks;
         progressX = Actor?.position.X ?? 0;
+        if (Main.netMode == NetmodeID.Server && Actor != null)
+        {
+            movementProbeTicks = ticks + 30;
+            movementProbeStartX = Actor.position.X;
+            Mod.Logger.Info($"[TPA-Move] start direction={direction}, ticks={ticks}, x={Actor.position.X}, active={Actor.active}");
+        }
     }
 
     internal bool SetRange(int tiles)
@@ -262,11 +277,17 @@ public sealed class DemoPlayerSystem : ModSystem
         if (Actor == null)
             return;
         int slot = Actor.whoAmI;
-        Actor.active = false;
-        if (ReferenceEquals(Main.player[slot], Actor) && previousSlot != null)
-            Main.player[slot] = previousSlot;
+        // A connecting real client takes priority over the experimental virtual slot.
+        bool claimed = Main.netMode == NetmodeID.Server && Netplay.Clients[slot].State != 0;
+        if (!claimed)
+        {
+            Actor.active = false;
+            if (ReferenceEquals(Main.player[slot], Actor) && previousSlot != null)
+                Main.player[slot] = previousSlot;
+        }
         Mod.Logger.Info($"[TPA] Removed slot={slot}, updates={totalUpdates}");
         Actor = null;
+        movementProbeTicks = 0;
         previousSlot = null;
         navigation.Clear();
     }
@@ -275,7 +296,7 @@ public sealed class DemoPlayerSystem : ModSystem
     {
         if (Actor == null)
             return;
-        if (Main.netMode != NetmodeID.SinglePlayer || !ReferenceEquals(Main.player[Actor.whoAmI], Actor))
+        if (Main.netMode == NetmodeID.MultiplayerClient || !ReferenceEquals(Main.player[Actor.whoAmI], Actor))
         {
             Remove();
             return;
@@ -284,6 +305,8 @@ public sealed class DemoPlayerSystem : ModSystem
         ClearInput(Actor);
         if (Actor.dead || !Actor.active)
         {
+            if (moveTicks > 0 && Main.netMode == NetmodeID.Server)
+                Mod.Logger.Warn($"[TPA-Move] cancelled remaining={moveTicks}, active={Actor.active}, dead={Actor.dead}");
             Stop();
             return;
         }
@@ -362,7 +385,20 @@ public sealed class DemoPlayerSystem : ModSystem
         }
     }
 
-    public override void PostUpdatePlayers() => lastUpdates = updatesThisTick;
+    public override void PostUpdatePlayers()
+    {
+        lastUpdates = updatesThisTick;
+        if (Main.netMode != NetmodeID.Server || Actor == null || movementProbeTicks <= 0) return;
+        movementProbeTicks--;
+        if (movementProbeTicks % 10 == 0)
+            Mod.Logger.Info($"[TPA-Move] sample tick={Main.GameUpdateCount}, remaining={moveTicks}, " +
+                $"active={Actor.active}, updates={updatesThisTick}, left={Actor.controlLeft}, right={Actor.controlRight}, " +
+                $"position={Actor.position}, velocity={Actor.velocity}, frozen={Actor.frozen}, " +
+                $"stoned={Actor.stoned}, webbed={Actor.webbed}, " +
+                $"acceleration={Actor.runAcceleration}, maxSpeed={Actor.maxRunSpeed}, blocked={blockedReason}");
+        if (movementProbeTicks == 0)
+            Mod.Logger.Info($"[TPA-Move] end deltaX={Actor.position.X - movementProbeStartX}");
+    }
 
     internal object? Snapshot() => Actor == null ? null : new
     {

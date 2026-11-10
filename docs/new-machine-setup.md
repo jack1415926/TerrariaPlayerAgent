@@ -10,6 +10,7 @@
 - .NET **8 SDK**，不是只有运行时。`global.json`指定8.0.426并允许兼容的较新8.0版本；只安装.NET 9／10不会替代所需的8 SDK。
 - Python 3.12，本项目Agent只用标准库，不需要安装pip依赖。
 - Steam、合法安装的Terraria和tModLoader；启动游戏时Steam须运行且已登录。
+- 实机测试辅助：在tModLoader中安装或订阅 Cheat Sheet 和 HERO's Mod；`play.ps1`会将两者加入独立测试配置的启用列表。它们不随本仓库分发。
 
 当前游戏机制和IL适配的验收版本为 **Terraria 1.4.4.9／tModLoader 2026.08.3.0**。优先在新机准备相同版本，可保留旧机安装文件作个人迁移，游戏文件不要提交仓库。若Steam安装了更新版本，需要先按新版本检查原生归属钩子；不能保证旧版本适配在新游戏版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题。
 
@@ -88,7 +89,7 @@ notepad .env
 
 ## 5. 继续开发时的入口
 
-先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；已通过能力和边界见docs/milestone-acceptance.md。按TODO逐批完成P0中断与安全恢复基础、P1持续宿主及游戏内目标收发、P2动态切换与恢复整合；个人电脑集中游戏验收后再推进P3近敌反应、P4原生拾取。
+先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；最新已通过能力和边界见docs/acceptance-checklist.md与docs/multiplayer-probe.md。当前先做好一名真人＋AI，下一批在离线机器做移动同步诊断与平滑；第二真人验收延后。P0/P1/P2 的离线宿主实现保留，剩余游戏验收及多人迁移不能视为已完成。
 
 **公司电脑只做离线开发时，不要求启动Steam或游戏、准备角色／世界或API密钥。** Python标准库即可运行现有检查：`python -B -m unittest discover -s agent -p test_run.py -v`；新增检查沿用本地Mock和临时目录。C#构建仍需.NET 8 SDK及匹配的tModLoader文件，没有这些依赖时将构建标为待验证。真实DeepSeek按需少量检查模拟状态下的工具调用，不以此证明游戏动作成功；详细分工和集中验收清单以TODO为准。
 

@@ -12,6 +12,8 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 .\scripts\play.ps1
 ```
 
+`play.ps1` 默认在独立测试配置中启用 Cheat Sheet 和 HERO's Mod，需事先在本机安装或订阅。实机测试可用它们控制白天、刷怪等条件，减少环境干扰；需要战斗测试时恢复刷怪或生成指定敌怪。记录实际使用的设置和测试结果，已生成的敌怪是否仍在须另行检查。辅助设置下的结果不能直接证明正常规则下的表现。
+
 进入测试世界后，不需要在聊天框输入测试命令。可以在 PowerShell 或由 AI 直接运行：
 
 ```powershell
