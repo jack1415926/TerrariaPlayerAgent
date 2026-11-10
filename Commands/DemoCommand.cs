@@ -16,7 +16,7 @@ public sealed class DemoCommand : ModCommand
     internal bool LastAccepted { get; private set; }
     public override string Command => "tpa";
     public override CommandType Type => CommandType.Chat;
-    public override string Usage => "/tpa spawn | left/right [seconds] | goto pixelX [seconds] | home [seconds] | range tiles/off | jump [left/right [seconds]] | down [seconds] | attack left/right [seconds] | select slot | mine tileX tileY [seconds] | stop | status | remove | equip wood/iron/pick | enemy slime/zombie/eye | clear-enemies";
+    public override string Usage => "/tpa spawn | left/right [seconds] | goto pixelX [seconds] | home [seconds] | range tiles/off | jump [left/right [seconds]] | down [seconds] | attack left/right [seconds] | select slot | mine tileX tileY [seconds] | goal text | stop | status | remove | equip wood/iron/pick | enemy slime/zombie/eye | clear-enemies";
     public override string Description => "Control the independent player demo (single-player only).";
 
     public override void Action(CommandCaller caller, string input, string[] args)
@@ -38,6 +38,21 @@ public sealed class DemoCommand : ModCommand
         }
 
         string action = args[0].ToLowerInvariant();
+        if (action == "goal")
+        {
+            // Goal text keeps its spaces, so it comes from the raw input instead of args.
+            string text = input.Trim();
+            if (text.StartsWith('/')) text = text[1..];
+            int firstSpace = text.IndexOf(' ');
+            int secondSpace = firstSpace < 0 ? -1 : text.IndexOf(' ', firstSpace + 1);
+            text = secondSpace < 0 ? "" : text[(secondSpace + 1)..].Trim();
+            if (text.Length == 0 || text.Length > 500)
+                Reject(caller, "Use /tpa goal <text>, 1-500 characters.");
+            else if (!ModContent.GetInstance<LocalTestBridge>().QueueGoal(text, out string queued))
+                Reject(caller, queued);
+            else caller.Reply(queued);
+            return;
+        }
         bool movement = action is "left" or "right";
         bool attack = action == "attack";
         bool runJump = action == "jump" && args.Length > 1;

@@ -17,7 +17,8 @@ import run as agent
 
 class FakeGame:
     def __init__(self):
-        self.state = dict(gameMenu=False, netMode=0, paused=False, tick=100, stopRevision=0,
+        self.state = dict(gameMenu=False, netMode=0, paused=False, focused=True,
+                          worldSession='world-1', tick=100, stopRevision=0,
                           player={}, actor=dict(slot=1, x=100, y=100, life=100, dead=False,
                           deathCount=0, respawnCount=0, moveTicks=0, jumpTicks=0, attackTicks=0,
                           itemAnimation=0, item=24, combatEvents=[]))
@@ -363,6 +364,18 @@ class InterruptionTests(unittest.TestCase):
         evidence = result['evidence']['navigation']
         self.assertEqual((evidence['before'], evidence['after'], evidence['advanced']), (1, 1, False))
         self.assertEqual(result['actions'][0]['status'], 'unknown')
+
+    def test_world_session_change_during_suspension_cancels_old_task(self):
+        result = self._suspend_then(lambda: self.game.state.update(worldSession='world-2'))
+        self.assertEqual(result['outcome'], 'interrupted')
+        self.assertEqual(result['interruption'], 'cancelled')
+
+    def test_paused_reason_records_focus_loss(self):
+        self.game.state.update(paused=True, focused=False)
+        with patch.object(agent, 'RESUME_TIMEOUT', 0.1):
+            result = self.execute(['/tpa right 1'])
+        self.assertEqual(result['interruption'], 'paused')
+        self.assertEqual(result['paused_reason'], 'focus_lost')
 
     def test_report_keeps_action_interruption_details(self):
         report = {}

@@ -13,8 +13,9 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Common/LocalTerrain.cs | 局部碰撞探测和17×11格观察 |
 | Common/NativeMining.cs | 普通挥动镐原生接入、范围／保护条件、候选、原生PickTile前后事件和取消 |
 | Common/NativeCombat.cs | 起手／近战／致死归属检查的有限适配，以及软核自动重生 |
-| Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离 |
-| Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；复用命令层，不开网络端口 |
+| Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱 |
+| Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；发布goal、显示goal-ack／goal-result；复用命令层，不开网络端口 |
+| Common/WorldSession.cs | 世界会话标识；进世界生成、退出清空，恢复对账据此拒绝跨世界恢复 |
 | Common/NativeChatInput.cs、EnterDiagnostics.cs | 开发输入诊断及固定聊天探针，不是任意文本输入工具 |
 | agent/run.py、agent/prompts/ | 模型工具白名单、顺序等待、实际结果判定、取消、有限预算、报告与能力／目标提示 |
 | scripts/ | 构建、独立启动、请求入口和相关检查；不负责给已加载程序集热更新 |

@@ -16,6 +16,7 @@ public sealed class LocalTestBridge : ModSystem
 {
     private int pollTicks;
     private string directory = "";
+    private string? pendingGoal;
     internal bool Enabled => Program.LaunchParameters.ContainsKey("-tpatest");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -41,6 +42,104 @@ public sealed class LocalTestBridge : ModSystem
         // Stop has its own mailbox so it cannot be blocked by an Agent status/action request.
         ProcessRequest("stop.json", true);
         ProcessRequest("request.json", false);
+        PublishGoal();
+        ReportGoalFiles();
+    }
+
+    internal bool QueueGoal(string text, out string message)
+    {
+        if (!Enabled || directory.Length == 0)
+        {
+            message = "Goal entry requires -tpatest (scripts/play.ps1).";
+            return false;
+        }
+        if (Main.gameMenu)
+        {
+            message = "Enter a single-player world first.";
+            return false;
+        }
+        if (pendingGoal != null || File.Exists(Path.Combine(directory, "goal.json")))
+        {
+            message = "The host has not taken the previous goal yet.";
+            return false;
+        }
+        pendingGoal = text;
+        message = "Goal queued for the host.";
+        return true;
+    }
+
+    private void PublishGoal()
+    {
+        if (pendingGoal == null) return;
+        string temporary = Path.Combine(directory, "goal.tmp");
+        File.WriteAllText(temporary, JsonSerializer.Serialize(new
+        {
+            id = Guid.NewGuid().ToString("N"),
+            text = pendingGoal,
+            stopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision
+        }));
+        try
+        {
+            File.Move(temporary, Path.Combine(directory, "goal.json"), true);
+            pendingGoal = null;
+        }
+        catch (IOException)
+        {
+            // Keep it queued; the previous goal file is still unread.
+        }
+    }
+
+    private void ReportGoalFiles()
+    {
+        foreach (string file in Directory.GetFiles(directory, "goal-ack-*.json")) ReportGoalFile(file, true);
+        foreach (string file in Directory.GetFiles(directory, "goal-result-*.json")) ReportGoalFile(file, false);
+    }
+
+    private void ReportGoalFile(string file, bool ack)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(file));
+            JsonElement root = document.RootElement;
+            string Status(string name) =>
+                root.TryGetProperty(name, out JsonElement value) ? value.GetString() ?? "" : "";
+            string text = GoalMessage(ack, Status("status"), ack ? Status("reason") : Status("summary"));
+            File.Delete(file);
+            Main.NewText(text, Color.LightGreen);
+        }
+        catch (IOException)
+        {
+            // Re-read on the next poll.
+        }
+        catch (JsonException)
+        {
+            TryDelete(file);
+        }
+    }
+
+    private static string GoalMessage(bool ack, string status, string detail) => ack
+        ? status switch
+        {
+            "accepted" => "[TPA] Goal accepted; the host is working on it.",
+            "duplicate" => "[TPA] This goal id was already handled; duplicate ignored.",
+            "stale" => "[TPA] Leftover goal from a previous host run; not replayed.",
+            "rejected" => $"[TPA] Goal rejected: {detail}",
+            _ => $"[TPA] {status}: {detail}"
+        }
+        : status switch
+        {
+            "finished" => $"[TPA] Goal finished (model ended normally): {detail}",
+            "budget_exhausted" => "[TPA] Turn budget used up; verify the result before trusting it.",
+            "interrupted" => "[TPA] Goal interrupted.",
+            "unknown" => "[TPA] Outcome unknown; observe before retrying.",
+            "failed" => $"[TPA] Goal failed: {detail}",
+            _ => $"[TPA] {status}: {detail}"
+        };
+
+    private static void TryDelete(string file)
+    {
+        try { File.Delete(file); }
+        catch (IOException) { }
     }
 
     private void ProcessRequest(string filename, bool stopOnly)
@@ -55,7 +154,7 @@ public sealed class LocalTestBridge : ModSystem
                 ?? throw new InvalidDataException("Empty request.");
             File.Delete(path);
             id = request.id;
-            if (!Guid.TryParse(id, out _) || request.command.Length > 200)
+            if (!Guid.TryParse(id, out _) || request.command.Length > 700)
                 throw new InvalidDataException("Invalid request id or command.");
             if (stopOnly && request.command.Trim() != "/tpa stop")
                 throw new InvalidDataException("The stop mailbox only accepts /tpa stop.");
@@ -112,7 +211,7 @@ public sealed class LocalTestBridge : ModSystem
         if (tokens.Length == 3 && tokens[0] == "tile" && int.TryParse(tokens[1], out int tileX) &&
             int.TryParse(tokens[2], out int tileY))
             return JsonSerializer.Serialize(NativeMining.Inspect(tileX, tileY));
-        string[] allowed = { "spawn", "left", "right", "jump", "down", "stop", "status", "remove", "equip", "enemy", "clear-enemies", "attack", "select", "mine", "goto", "home", "range" };
+        string[] allowed = { "spawn", "left", "right", "jump", "down", "stop", "status", "remove", "equip", "enemy", "clear-enemies", "attack", "select", "mine", "goto", "home", "range", "goal" };
         if (tokens.Length < 2 || tokens[0] != "/tpa" || !allowed.Contains(tokens[1]))
             throw new InvalidOperationException("Only /tpa demo commands and documented diagnostics are allowed.");
         var caller = new TestCaller(Main.LocalPlayer);
@@ -125,6 +224,8 @@ public sealed class LocalTestBridge : ModSystem
         gameMenu = Main.gameMenu,
         netMode = Main.netMode,
         paused = Main.gamePaused,
+        focused = Main.hasFocus,
+        worldSession = ModContent.GetInstance<WorldSession>().Id,
         tick = Main.GameUpdateCount,
         stopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision,
         input = ModContent.GetInstance<EnterDiagnostics>().Snapshot(),

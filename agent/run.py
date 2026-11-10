@@ -132,6 +132,16 @@ def _sequence_evidence(before, after):
             for kind in old}
 
 
+def _paused_reason(state):
+    if state.get("gameMenu"):
+        return "menu"
+    if state.get("focused") is False:
+        return "focus_lost"
+    if state.get("paused"):
+        return "paused"
+    return None
+
+
 def _active(actor):
     if not actor:
         return False
@@ -177,7 +187,9 @@ def game_request(command, expected_revision=None):
 
 def observation(result):
     state = result["state"]
-    compact = {key: state.get(key) for key in ("gameMenu", "netMode", "paused", "tick", "stopRevision", "player", "actor")}
+    compact = {key: state.get(key) for key in
+               ("gameMenu", "netMode", "paused", "focused", "worldSession", "tick", "stopRevision",
+                "player", "actor")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
@@ -193,6 +205,7 @@ class TaskControl:
         self.events = []
         self.takeover = False
         self.evidence = None
+        self.world_session = state.get("worldSession") or None
         actor = state.get("actor") or {}
         self.actor_slot = actor.get("slot")
         self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
@@ -229,6 +242,8 @@ class TaskControl:
                 raise TaskInterrupted("User stopped/removed the AI while the task was suspended.")
             if state["gameMenu"] or state["netMode"] != 0:
                 raise TaskInterrupted("The single-player world is no longer running.")
+            if self.world_session and state.get("worldSession") and state["worldSession"] != self.world_session:
+                raise TaskInterrupted("The world session changed while the task was suspended.")
             actor = state.get("actor") or {}
             if (actor.get("slot") != self.actor_slot or
                     (actor.get("deathCount"), actor.get("respawnCount")) != self.actor_death):
@@ -254,7 +269,8 @@ class TaskControl:
                 "paused" if isinstance(exc, GameSuspended) else
                 "tick_stalled" if isinstance(exc, TickStalled) else
                 "unreachable" if isinstance(exc, Unreachable) else "unknown")
-        record = {"kind": kind, "error": str(exc), "executed": getattr(exc, "executed", None), "resume": None}
+        record = {"kind": kind, "error": str(exc), "executed": getattr(exc, "executed", None),
+                  "paused_reason": _paused_reason(self.state), "resume": None}
         if kind == "cancelled":
             if getattr(exc, "state", None) is not None:
                 self.state = exc.state
@@ -333,8 +349,8 @@ def execute_actions(commands, wait, control):
                                interruption=record["kind"], evidence=record["evidence"])
         return {"ok": False, "outcome": "interrupted" if cancelled else "unknown",
                 "error": record["error"], "interruption": record["kind"],
-                "evidence": record["evidence"], "resume": record["resume"],
-                "actions": actions, "state": control.state}
+                "paused_reason": record["paused_reason"], "evidence": record["evidence"],
+                "resume": record["resume"], "actions": actions, "state": control.state}
 
 
 def _execute_actions(commands, wait, control, actions):
@@ -522,13 +538,15 @@ def run(args, report):
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)})
                 if result.get("outcome") in ("interrupted", "unknown"):
                     report.update(outcome=result["outcome"], error=result["error"],
-                                  interruption=result.get("interruption"), resume=result.get("resume"),
-                                  evidence=result.get("evidence"))
+                                  interruption=result.get("interruption"),
+                                  paused_reason=result.get("paused_reason"),
+                                  resume=result.get("resume"), evidence=result.get("evidence"))
                     return
     except INTERRUPTIONS as exc:
         record = control.recover(exc)
         report.update(outcome="interrupted" if record["kind"] == "cancelled" else "unknown",
                       error=record["error"], interruption=record["kind"],
+                      paused_reason=record["paused_reason"],
                       evidence=record["evidence"], resume=record["resume"])
         print(record["error"], flush=True)
     finally:
