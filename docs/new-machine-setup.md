@@ -29,6 +29,25 @@ $tml = 'C:\Program Files (x86)\Steam\steamapps\common\tModLoader'
 
 不需要把源码复制到ModSources，也不需要将新电脑改成旧电脑的F盘路径。脚本默认路径是旧开发机约定，新机显式传`-TmlPath`即可；换一个PowerShell会话后需重新设置`$tml`或直接传目录。
 
+### 没有Steam时：用GitHub release的zip只做构建
+
+只编译、不进游戏的公司电脑或离线机器走这条路线；仍需要.NET 8 SDK。
+
+1. 下载对应版本的`tModLoader.zip`，例如 [v2026.08.3.0](https://github.com/tModLoader/tModLoader/releases/tag/v2026.08.3.0)，约61MB。版本必须与验收版本一致；`tModLoader.dll`的ProductVersion应为`1.4.4.9+2026.08.3.0`。
+2. 解压到`.local/tml/2026.08.3.0`，不要解压到仓库根目录：`build.txt`的`buildIgnore`不排除它，`.tmod`会把整个目录打进去（实测58MB，正常约88KB）。
+3. zip不含Terraria资源和启动器，只能编译和打包，不能启动游戏；实机验收仍需Steam安装的游戏。
+4. 受限账户下构建时，用进程级变量把写路径指到工作区，不需要管理员权限：
+
+```powershell
+$env:PATH = "C:\Program Files\dotnet;$env:PATH"
+$env:DOTNET_CLI_HOME = "$PWD\.local\dotnet-home"
+$env:NUGET_PACKAGES  = "$PWD\.local\nuget"
+$env:APPDATA         = "$PWD\.local\appdata"
+.\scripts\build.ps1 -TmlPath "$PWD\.local\tml\2026.08.3.0"
+```
+
+`APPDATA`一行用于读不到用户`NuGet.Config`的环境；不需要时可以省略。刚装完SDK后已打开的PowerShell可能还找不到`dotnet`，重开或直接用完整路径。产物在`.local/tModLoader/Mods/`。
+
 如果GitHub网络不通，按新电脑实际代理配置处理，不盲抄旧机7890端口，也不设置全局Git代理。若PowerShell提示脚本策略阻止，按该电脑的脚本执行策略处理；项目不会自动更改系统策略。
 
 ## 3. 准备独立测试世界
@@ -75,4 +94,4 @@ notepad .env
 
 只改提示词、Python Agent或文档可复用运行中的游戏；改C#需重新构建并加载。打包遇到tmod占用按docs/debugging.md处理，不把旧代码画面当作新功能。新机首次只需确认构建、模组加载和一条实际动作能工作，不必先重跑全部历史检查。
 
-这是新机安装说明，不是已经在另一台实体电脑验证通过的声明。此前已有干净源码目录使用显式游戏路径构建的检查；2026-11-09只同步离线开发路线，未新增游戏／API或构建验证。游戏／API需要在实际验收电脑完成本地准备。
+这是新机安装说明，不是已经在另一台实体电脑验证通过的声明。此前已有干净源码目录使用显式游戏路径构建的检查；2026-11-10在离线机器用上面的release zip路线构建通过（0警告／0错误，产物约88KB），未启动游戏，也未做游戏内或API验收。游戏／API需要在实际验收电脑完成本地准备。

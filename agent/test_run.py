@@ -1,10 +1,16 @@
 """Offline checks for sequential actions, cancellation and factual feedback."""
 import copy
+import json
+import os
+from pathlib import Path
+import shutil
+import tempfile
 import threading
 import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import uuid
 
 import run as agent
 
@@ -17,6 +23,7 @@ class FakeGame:
                           itemAnimation=0, item=24, combatEvents=[]))
         self.commands = []
         self.blocked = self.reject = self.cancel = False
+        self.hold_active = False
 
     def request(self, command, expected_revision=None):
         if expected_revision is not None and expected_revision != self.state['stopRevision']:
@@ -27,6 +34,8 @@ class FakeGame:
             if self.cancel:
                 self.state['stopRevision'] += 1
             for key in ('moveTicks', 'jumpTicks', 'attackTicks', 'itemAnimation'):
+                if self.hold_active:
+                    continue
                 if key == 'moveTicks' and actor[key] and not self.blocked:
                     actor['x'] += 6
                 actor[key] = max(0, actor[key] - 6)
@@ -38,6 +47,7 @@ class FakeGame:
                 actor['attackTicks'] = 18
             if command == '/tpa stop':
                 self.state['stopRevision'] += 1
+                self.hold_active = False
                 actor['moveTicks'] = actor['attackTicks'] = 0
         return dict(ok=True, accepted=not self.reject, reply='test', state=copy.deepcopy(self.state))
 
@@ -179,9 +189,10 @@ class ActionTests(unittest.TestCase):
 
     def test_paused_action_is_unknown_and_does_not_continue(self):
         self.game.state['paused'] = True
-        result = self.execute(['/tpa right', '/tpa attack right'])
+        with patch.object(agent, 'RESUME_TIMEOUT', 0.2):
+            result = self.execute(['/tpa right', '/tpa attack right'])
         self.assertEqual(result['outcome'], 'unknown')
-        self.assertEqual(len(self.game.commands), 1)
+        self.assertEqual(self.game.commands, [])
 
     def test_stop_during_api_wait_does_not_wait_for_response(self):
         release = threading.Event()
@@ -244,6 +255,177 @@ class ActionTests(unittest.TestCase):
             release.set()
         self.assertEqual(report['outcome'], 'interrupted')
         self.assertEqual(self.game.commands, [])
+
+
+class InterruptionTests(unittest.TestCase):
+    """Suspension, unreachable bridge and lost replies must not look like ordinary failures."""
+
+    def setUp(self):
+        self.game = FakeGame()
+        self.control = agent.TaskControl(copy.deepcopy(self.game.state))
+        self.requests = patch.object(agent, 'game_request', self.game.request)
+        self.requests.start()
+        self.addCleanup(self.requests.stop)
+
+    def execute(self, commands):
+        with patch.object(agent.time, 'sleep'):
+            return agent.execute_actions(commands, 0, self.control)
+
+    def test_paused_game_is_reported_as_paused_not_generic_unknown(self):
+        self.game.state['paused'] = True
+        with patch.object(agent, 'RESUME_TIMEOUT', 0.2):
+            result = self.execute(['/tpa right 0.5', '/tpa attack right'])
+        self.assertEqual(result['outcome'], 'unknown')
+        self.assertEqual(result['interruption'], 'paused')
+        self.assertFalse(result['resume']['resumed'])
+        self.assertEqual(result['actions'], [])
+        self.assertEqual(self.game.commands, [])
+
+    def test_frozen_tick_is_reported_separately_from_pause(self):
+        original = self.game.request
+
+        def frozen(command, expected_revision=None):
+            actor = self.game.state['actor']
+            ticks = (actor['moveTicks'], actor['jumpTicks'], actor['attackTicks'])
+            reply = original(command, expected_revision)
+            if command == 'status':
+                self.game.state['tick'] = 100
+                reply['state']['tick'] = 100
+                actor.update(moveTicks=ticks[0], jumpTicks=ticks[1], attackTicks=ticks[2])
+                reply['state']['actor'].update(moveTicks=ticks[0], jumpTicks=ticks[1], attackTicks=ticks[2])
+            return reply
+
+        with patch.object(agent, 'game_request', frozen), \
+                patch.object(agent, 'TICK_STALL_SECONDS', 0.05), \
+                patch.object(agent, 'RESUME_TIMEOUT', 0.15):
+            result = self.execute(['/tpa right 0.5'])
+        self.assertEqual(result['interruption'], 'tick_stalled')
+        self.assertEqual(result['actions'][0]['status'], 'unknown')
+
+
+    def _suspend_then(self, change, commands=('/tpa right 2', '/tpa attack right')):
+        original = self.game.request
+        calls = [0]
+
+        def wrapper(command, expected_revision=None):
+            if command.startswith('/tpa right'):
+                self.game.state['paused'] = True
+                self.game.hold_active = True
+            reply = original(command, expected_revision)
+            if command == 'status':
+                calls[0] += 1
+                if calls[0] == 3:
+                    self.game.state['paused'] = False
+                    change()
+            return reply
+
+        with patch.object(agent, 'game_request', wrapper), patch.object(agent, 'RESUME_TIMEOUT', 0.5):
+            return self.execute(list(commands))
+
+    def test_resume_takes_over_an_action_that_is_still_running(self):
+        result = self._suspend_then(lambda: None)
+        self.assertEqual(result['interruption'], 'paused')
+        self.assertTrue(result['resume']['resumed'])
+        self.assertTrue(result['resume']['takeover'])
+        self.assertEqual([c[0] for c in self.game.commands], ['/tpa right 2', '/tpa stop'])
+        self.assertEqual(self.control.revision, 1)
+
+    def test_user_stop_during_suspension_cancels_old_task(self):
+        result = self._suspend_then(lambda: self.game.state.update(stopRevision=1))
+        self.assertEqual(result['outcome'], 'interrupted')
+        self.assertEqual(result['interruption'], 'cancelled')
+        self.assertEqual([c[0] for c in self.game.commands], ['/tpa right 2'])
+
+    def test_world_exit_during_suspension_cancels_old_task(self):
+        result = self._suspend_then(lambda: self.game.state.update(gameMenu=True))
+        self.assertEqual(result['outcome'], 'interrupted')
+        self.assertEqual(result['interruption'], 'cancelled')
+
+    def test_ai_replacement_during_suspension_cancels_old_task(self):
+        result = self._suspend_then(lambda: self.game.state['actor'].update(slot=2))
+        self.assertEqual(result['outcome'], 'interrupted')
+        self.assertEqual(result['interruption'], 'cancelled')
+
+    def test_report_keeps_action_interruption_details(self):
+        report = {}
+        args = SimpleNamespace(stop=False, check_api=False, goal='Walk', max_turns=2)
+
+        def chat(messages, tools=None):
+            self.game.state['paused'] = True
+            return {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "function": {"name": "game_actions",
+                                          "arguments": json.dumps({"commands": ["/tpa right 1"]})}}]}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat), patch.object(agent, 'RESUME_TIMEOUT', 0.2):
+            agent.run(args, report)
+        self.assertEqual(report['outcome'], 'unknown')
+        self.assertEqual(report['interruption'], 'paused')
+        self.assertFalse(report['resume']['resumed'])
+
+    def test_unconfirmed_stop_is_reported_instead_of_silently_dropped(self):
+        report = {}
+        args = SimpleNamespace(stop=False, check_api=False, goal='Walk', max_turns=2)
+        original = self.game.request
+
+        def no_stop(command, expected_revision=None):
+            if command == '/tpa stop':
+                raise agent.Unreachable('stop not answered', executed=False)
+            return original(command, expected_revision)
+
+        with patch.object(agent, 'game_request', no_stop), \
+                patch.object(agent, 'chat_interruptibly', side_effect=agent.TaskInterrupted('user stop')), \
+                patch.object(agent, 'RESUME_TIMEOUT', 0.2):
+            agent.run(args, report)
+        self.assertEqual(report['outcome'], 'interrupted')
+        self.assertIn('stop_error', report)
+
+
+class BridgeProtocolTests(unittest.TestCase):
+    """The file mailbox must say whether an unanswered request may have run."""
+
+    def setUp(self):
+        # Some sandboxes only allow writes in directories created outside this process.
+        base = Path(os.environ.get('TPA_TEST_MAILBOX') or tempfile.mkdtemp())
+        self.directory = base / f"case-{uuid.uuid4().hex[:8]}"
+        try:
+            self.directory.mkdir()
+            (self.directory / 'probe').write_text('', encoding='utf-8')
+            (self.directory / 'probe').unlink()
+        except OSError:
+            self.skipTest('mailbox is not writable here; set TPA_TEST_MAILBOX to a writable directory')
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.mailbox_patch = patch.object(agent, 'MAILBOX', self.directory)
+        self.mailbox_patch.start()
+        self.addCleanup(self.mailbox_patch.stop)
+        self.timeout_patch = patch.object(agent, 'REQUEST_TIMEOUT', 0.2)
+        self.timeout_patch.start()
+        self.addCleanup(self.timeout_patch.stop)
+
+    def test_unanswered_request_is_removed_and_reported_as_not_executed(self):
+        with self.assertRaises(agent.Unreachable) as caught:
+            agent.game_request('/tpa right 1', 7)
+        self.assertFalse(caught.exception.executed)
+        self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_consumed_request_without_reply_stays_unknown(self):
+        seen = {}
+
+        def consume():
+            pending = self.directory / 'request.json'
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if pending.exists():
+                    seen.update(json.loads(pending.read_text(encoding='utf-8')))
+                    pending.unlink()
+                    return
+                time.sleep(0.01)
+
+        threading.Thread(target=consume, daemon=True).start()
+        with self.assertRaises(agent.OutcomeUnknown):
+            agent.game_request('/tpa mine 10 20', 3)
+        self.assertEqual(seen['command'], '/tpa mine 10 20')
+        self.assertEqual(seen['expectedStopRevision'], 3)
+        self.assertEqual(list(self.directory.iterdir()), [])
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ from urllib import error, request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+MAILBOX = ROOT / ".local/tModLoader/TPA"
 COMMAND = re.compile(
     r"(?:status|/tpa (?:spawn|status|stop|jump|clear-enemies)|"
     r"/tpa equip (?:wood|iron|pick)|/tpa select [0-9]{1,2}|"
@@ -94,8 +95,39 @@ class OutcomeUnknown(RuntimeError):
     pass
 
 
+class GameSuspended(RuntimeError):
+    """The game reports paused: the task is suspended, not cancelled."""
+
+
+class TickStalled(RuntimeError):
+    """The bridge answers, but the world tick is not advancing."""
+
+
+class Unreachable(RuntimeError):
+    """The game did not answer. executed tells whether the request may have run."""
+
+    def __init__(self, message, executed=False):
+        super().__init__(message)
+        self.executed = executed
+
+
+INTERRUPTIONS = (TaskInterrupted, GameSuspended, TickStalled, Unreachable, OutcomeUnknown)
+REQUEST_TIMEOUT = 5
+RESUME_TIMEOUT = 15
+TICK_STALL_SECONDS = 2
+
+
+def _active(actor):
+    if not actor:
+        return False
+    if any(actor.get(key, 0) > 0 for key in
+           ("moveTicks", "jumpTicks", "attackTicks", "dropTicks", "mineTicks", "itemAnimation")):
+        return True
+    return bool((actor.get("navigation") or {}).get("active"))
+
+
 def game_request(command, expected_revision=None):
-    directory = ROOT / ".local/tModLoader/TPA"
+    directory = MAILBOX
     if not directory.is_dir():
         raise RuntimeError("Start scripts/play.ps1 and enter the test world first.")
     pending = directory / ("stop.json" if command == "/tpa stop" else "request.json")
@@ -111,7 +143,7 @@ def game_request(command, expected_revision=None):
         temporary.rename(pending)
     finally:
         temporary.unlink(missing_ok=True)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + REQUEST_TIMEOUT
     while time.monotonic() < deadline:
         if response.exists():
             result = json.loads(response.read_text(encoding="utf-8-sig"))
@@ -124,7 +156,8 @@ def game_request(command, expected_revision=None):
         time.sleep(0.05)
     if pending.exists() and json.loads(pending.read_text(encoding="utf-8-sig")).get("id") == identity:
         pending.unlink()
-    raise OutcomeUnknown("Game request timed out. Outcome unknown; focus the game and query status before retrying.")
+        raise Unreachable("The game did not answer; the request was not executed.", executed=False)
+    raise OutcomeUnknown("The game took the request but did not answer; its outcome is unknown.")
 
 
 def observation(result):
@@ -143,10 +176,18 @@ class TaskControl:
         self.revision = state["stopRevision"]
         self.state = state
         self.events = []
+        self.takeover = False
+        actor = state.get("actor") or {}
+        self.actor_slot = actor.get("slot")
+        self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
 
     def update(self, reply):
         self.events = (reply["state"].get("actor") or {}).get("combatEvents", [])
         self.state = observation(reply)
+        actor = self.state.get("actor") or {}
+        if actor.get("slot") is not None:
+            self.actor_slot = actor.get("slot")
+            self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
 
     def observe(self):
         self.update(game_request("status"))
@@ -154,7 +195,62 @@ class TaskControl:
             raise TaskInterrupted("User stopped/removed the AI; old task cancelled.")
         if self.state["gameMenu"] or self.state["netMode"] != 0:
             raise TaskInterrupted("The single-player world is no longer running.")
+        if self.state["paused"]:
+            raise GameSuspended("The game is paused; no new command was dispatched.")
         return self.state
+
+    def resume(self):
+        """Wait out a pause or outage, then prove this task still owns the AI."""
+        deadline = time.monotonic() + RESUME_TIMEOUT
+        while time.monotonic() <= deadline:
+            try:
+                state = observation(game_request("status"))
+            except (Unreachable, OutcomeUnknown):
+                time.sleep(0.1)
+                continue
+            if state["stopRevision"] != self.revision:
+                raise TaskInterrupted("User stopped/removed the AI while the task was suspended.")
+            if state["gameMenu"] or state["netMode"] != 0:
+                raise TaskInterrupted("The single-player world is no longer running.")
+            actor = state.get("actor") or {}
+            if (actor.get("slot") != self.actor_slot or
+                    (actor.get("deathCount"), actor.get("respawnCount")) != self.actor_death):
+                raise TaskInterrupted("The AI was removed, died or replaced while the task was suspended.")
+            self.state = state
+            if state["paused"]:
+                time.sleep(0.1)
+                continue
+            if not _active(actor):
+                return state
+            if not self.takeover:
+                # A stale input is still running: cancel it before this task stops dispatching.
+                self.update(game_request("/tpa stop", self.revision))
+                self.revision = self.state["stopRevision"]
+                self.takeover = True
+            time.sleep(0.1)
+        raise OutcomeUnknown("The game did not recover in time; the action outcome stays unknown.")
+
+    def recover(self, exc):
+        """Classify an interruption, try to reclaim the task, and keep the evidence."""
+        kind = ("cancelled" if isinstance(exc, TaskInterrupted) else
+                "paused" if isinstance(exc, GameSuspended) else
+                "tick_stalled" if isinstance(exc, TickStalled) else
+                "unreachable" if isinstance(exc, Unreachable) else "unknown")
+        record = {"kind": kind, "error": str(exc), "executed": getattr(exc, "executed", None), "resume": None}
+        if kind == "cancelled":
+            if getattr(exc, "state", None) is not None:
+                self.state = exc.state
+            return record
+        try:
+            self.state = self.resume()
+        except TaskInterrupted as cancelled:
+            record.update(kind="cancelled", error=str(cancelled), resume={"resumed": False, "cancelled": True})
+            self.state = cancelled.state or self.state
+        except (Unreachable, GameSuspended, TickStalled, OutcomeUnknown) as failed:
+            record["resume"] = {"resumed": False, "reason": str(failed)}
+        else:
+            record["resume"] = {"resumed": True, "takeover": self.takeover}
+        return record
 
     def wait(self, seconds=0, action=False, actor_before=None):
         start = self.state["tick"]
@@ -166,17 +262,18 @@ class TaskControl:
             if actor_before and (not actor or actor["dead"] or
                     any(actor[key] != actor_before[key] for key in ("deathCount", "respawnCount"))):
                 raise TaskInterrupted("AI died or was replaced; remaining actions cancelled.")
-            active = action and actor and any(actor[key] > 0 for key in
-                                              ("moveTicks", "jumpTicks", "attackTicks", "dropTicks", "mineTicks", "itemAnimation")
-                                              if key in actor)
-            active = active or action and bool((actor or {}).get("navigation", {}).get("active"))
+            active = action and _active(actor)
             if not active and state["tick"] - start >= math.ceil(seconds * 60):
                 return state
             now = time.monotonic()
             if state["tick"] != last_tick:
                 last_tick, progressed = state["tick"], now
-            if state["paused"] or now - progressed > 2 or now > deadline:
-                raise OutcomeUnknown("Simulation paused/stalled; action completion is unknown.")
+            if state["paused"]:
+                raise GameSuspended("The game is paused; the action was suspended, not cancelled.")
+            if now - progressed > TICK_STALL_SECONDS:
+                raise TickStalled("The world tick stopped advancing; action completion is unknown.")
+            if now > deadline:
+                raise OutcomeUnknown("The action did not finish before its deadline; completion is unknown.")
             time.sleep(0.1)
             self.observe()
 
@@ -207,13 +304,16 @@ def execute_actions(commands, wait, control):
     actions = []
     try:
         return _execute_actions(commands, wait, control, actions)
-    except (TaskInterrupted, OutcomeUnknown) as exc:
-        if isinstance(exc, TaskInterrupted) and exc.state is not None:
-            control.state = exc.state
-        outcome = "interrupted" if isinstance(exc, TaskInterrupted) else "unknown"
+    except INTERRUPTIONS as exc:
+        record = control.recover(exc)
+        cancelled = record["kind"] == "cancelled"
         if actions and actions[-1]["status"] == "running":
-            actions[-1].update(status=outcome, reason=str(exc), state=control.state)
-        return {"ok": False, "outcome": outcome, "error": str(exc), "actions": actions, "state": control.state}
+            actions[-1].update(status="interrupted" if cancelled else "unknown",
+                               reason=record["error"], state=control.state,
+                               interruption=record["kind"])
+        return {"ok": False, "outcome": "interrupted" if cancelled else "unknown",
+                "error": record["error"], "interruption": record["kind"],
+                "resume": record["resume"], "actions": actions, "state": control.state}
 
 
 def _execute_actions(commands, wait, control, actions):
@@ -400,11 +500,14 @@ def run(args, report):
                 entry["tools"].append({"call_id": call["id"], "result": result})
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)})
                 if result.get("outcome") in ("interrupted", "unknown"):
-                    report.update(outcome=result["outcome"], error=result["error"])
+                    report.update(outcome=result["outcome"], error=result["error"],
+                                  interruption=result.get("interruption"), resume=result.get("resume"))
                     return
-    except (TaskInterrupted, OutcomeUnknown) as exc:
-        report.update(outcome="interrupted" if isinstance(exc, TaskInterrupted) else "unknown", error=str(exc))
-        print(str(exc), flush=True)
+    except INTERRUPTIONS as exc:
+        record = control.recover(exc)
+        report.update(outcome="interrupted" if record["kind"] == "cancelled" else "unknown",
+                      error=record["error"], interruption=record["kind"], resume=record["resume"])
+        print(record["error"], flush=True)
     finally:
         # Preserve the actor and default respawn; only cancel active input.
         try:

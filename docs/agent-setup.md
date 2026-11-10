@@ -68,12 +68,14 @@ goto／home核对本次sequence和实际误差，挖掘核对本次目标、工�
 
 stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动作或额外等待期间检查取消，后续动作带expectedStopRevision，游戏线程拒绝过期任务。旧任务清理也带版本，不覆盖新任务。迟到API响应不执行，但请求本身可能已在服务端完成／计费。
 
-当前失焦暂停可能让入口不响应，停止超时只能说未确认；聚焦后先查状态，不盲目重发有副作用动作。游戏tick持续2秒不前进、暂停或等待超限标unknown并结束；死亡／移除／停止取消旧动作。尚未实现暂停挂起恢复，这属于下一批。
+当前失焦暂停可能让入口不响应，停止超时只能说未确认；聚焦后先查状态，不盲目重发有副作用动作。
+
+宿主侧已区分五类中断：明确暂停（paused）、tick冻结但桥仍应答、请求没被消费（未执行）、被消费但无回执（结果未知）、主动取消。挂起后会等通信恢复并核对stopRevision、世界、AI身份与仍在执行的动作；仍在执行则先发stop接管，再按unknown收尾，不重放原命令。结果和报告带interruption（paused／tick_stalled／unreachable／cancelled／unknown）和resume（resumed／takeover／cancelled／reason）。以上只做了离线检查（2026-11-10，27项通过），未经实机验证；失焦时的真实行为和后台持续模拟仍需在验收电脑确认。
 
 正常结束、预算用尽或异常时宿主尝试stop并保留AI；无法确认时记stop_error。报告在`.local/test-results/agent-日期时间-标识.json`，包含模型实际调用、游戏结果和usage。model_finished不等于通用目标自动验收通过；默认武器任务另有指定命中判定，自定义Goal须结合实际证据。
 
 ## 已有检查与用量
 
-离线检查入口：`python -m unittest discover -s agent -p test_run.py -v`。最近17项通过；文档修改不用重跑。游戏机制、停止和最新模型闭环证据集中于阶段报告与validation.md，不每次开工全量重验。
+离线检查入口：`python -m unittest discover -s agent -p test_run.py -v`。最近27项通过；文档修改不用重跑。游戏机制、停止和最新模型闭环证据集中于阶段报告与validation.md，不每次开工全量重验。
 
 最新完整任务8次请求累计153,201 tokens，含缓存及重复历史，未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。后续持续任务前再评估有界历史和观察去重，不以大型记忆系统或框架迁移阻塞当前功能。
