@@ -473,7 +473,7 @@ def verify_weapon_task(report):
     return {"passed": all(evidence.values()), "item_hits": evidence}
 
 
-def run(args, report):
+def run(args, report, expected=None):
     if args.stop:
         result = game_request("/tpa stop")
         report.update(outcome="stopped", final_state=observation(result))
@@ -487,6 +487,12 @@ def run(args, report):
     initial = observation(game_request("status"))
     if initial["gameMenu"] or initial["netMode"] != 0 or initial["paused"]:
         raise RuntimeError("Enter a running single-player test world and keep it focused.")
+    if expected:
+        # The host validated this goal a moment ago; a stop or world change since then must win.
+        if expected.get("stopRevision") is not None and initial["stopRevision"] != expected["stopRevision"]:
+            raise TaskInterrupted("A stop was issued before the task started; this goal is expired.")
+        if expected.get("worldSession") and initial.get("worldSession") and initial["worldSession"] != expected["worldSession"]:
+            raise TaskInterrupted("The world session changed before the task started; this goal is expired.")
     if not args.goal and Path(args.goal_file).resolve() == ROOT / "agent/prompts/explore.md":
         if not initial.get("actor") or initial["actor"]["dead"]:
             raise RuntimeError("Prepare a living exploration AI and its starting equipment first.")
@@ -639,9 +645,13 @@ def host_tick(args, report, seen):
     entry = {"id": goal["id"], "text": text}
     report["goals"].append(entry)
     goal_report = {}
+    # Bind the task to the snapshot just checked: a stop after this point must invalidate it.
+    expected = {"stopRevision": current["stopRevision"], "worldSession": current.get("worldSession")}
     try:
         run(SimpleNamespace(stop=False, check_api=False, goal=text, goal_file="",
-                            max_turns=args.max_turns), goal_report)
+                            max_turns=args.max_turns), goal_report, expected)
+    except TaskInterrupted as exc:
+        goal_report.update(outcome="interrupted", error=str(exc))
     except Exception as exc:  # one failed goal must not stop the host
         goal_report.update(outcome="failed", error=str(exc))
     outcome = goal_report.get("outcome")
@@ -657,33 +667,47 @@ def host(args, report, idle_polls=None, max_goals=0):
     report.update(mode="host", goals=[], outcome="host_stopped")
     started = time.time()
     beat = {"pid": os.getpid(), "started": started, "beat": started}
-    _write_json(MAILBOX / "host-ready.json", beat)
-    pending = MAILBOX / "goal.json"
+    ready = MAILBOX / "host-ready.json"
+    _write_json(ready, beat)
+    stopping = threading.Event()
+
+    def keep_alive():
+        # Heartbeat lives outside the loop: one goal can run for minutes and must not look offline.
+        while not stopping.wait(HEARTBEAT_SECONDS):
+            beat["beat"] = time.time()
+            try:
+                _write_json(ready, beat)
+            except OSError:
+                pass
+
+    beat_thread = threading.Thread(target=keep_alive, daemon=True)
+    beat_thread.start()
     try:
-        leftover = pending.stat().st_mtime < started
-    except OSError:
-        leftover = False
-    if leftover:
-        stale = poll_goal()
-        if stale:
-            goal_ack(stale, "stale", "Host restarted; a leftover goal is never replayed.")
-    seen = set()
-    idle = 0
-    while True:
-        now = time.time()
-        if now - beat["beat"] >= HEARTBEAT_SECONDS:
-            # The game side refuses goals when this file goes stale, so keep it fresh while idle.
-            beat["beat"] = now
-            _write_json(MAILBOX / "host-ready.json", beat)
-        if host_tick(args, report, seen):
-            idle = 0
-            if max_goals and len(report["goals"]) >= max_goals:
+        pending = MAILBOX / "goal.json"
+        try:
+            leftover = pending.stat().st_mtime < started
+        except OSError:
+            leftover = False
+        if leftover:
+            stale = poll_goal()
+            if stale:
+                goal_ack(stale, "stale", "Host restarted; a leftover goal is never replayed.")
+        seen = set()
+        idle = 0
+        while True:
+            if host_tick(args, report, seen):
+                idle = 0
+                if max_goals and len(report["goals"]) >= max_goals:
+                    break
+                continue
+            idle += 1
+            if idle_polls is not None and idle >= idle_polls:
                 break
-            continue
-        idle += 1
-        if idle_polls is not None and idle >= idle_polls:
-            break
-        time.sleep(IDLE_POLL_SECONDS)
+            time.sleep(IDLE_POLL_SECONDS)
+    finally:
+        stopping.set()
+        beat_thread.join(timeout=1)
+        ready.unlink(missing_ok=True)
     return report
 
 

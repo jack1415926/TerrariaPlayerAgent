@@ -707,14 +707,75 @@ class HostTests(unittest.TestCase):
             agent.host_tick(self.args, report, set())
         self.assertEqual(report['goals'][0]['status'], 'interrupted')
 
-    def test_host_ready_carries_a_heartbeat(self):
+    def read_ready(self):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                return json.loads((self.mailbox / 'host-ready.json').read_text(encoding='utf-8-sig'))
+            except (OSError, ValueError):
+                time.sleep(0.01)  # the heartbeat replaces the file while we read it
+        self.fail('host-ready.json was never readable')
+
+    def test_heartbeat_stays_fresh_while_a_goal_runs(self):
+        report = {}
+        beats = []
+        reply = {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+
+        def chat(messages, tools=None):
+            beats.append(self.read_ready()['beat'])
+            time.sleep(0.12)  # the task outlives several heartbeat intervals
+            beats.append(self.read_ready()['beat'])
+            return reply
+
+        pending = [{'id': 'g1', 'text': 'Walk right'}]
+        with patch.object(agent, 'poll_goal', side_effect=lambda: pending.pop(0) if pending else None), \
+                patch.object(agent, 'HEARTBEAT_SECONDS', 0.02), \
+                patch.object(agent, 'chat', side_effect=chat):
+            agent.host(self.args, report, idle_polls=1, max_goals=1)
+        self.assertGreater(beats[1], beats[0])
+
+    def test_host_removes_its_heartbeat_on_exit(self):
         report = {}
         with patch.object(agent, 'chat', side_effect=AssertionError('idle host called the model')):
-            agent.host(self.args, report, idle_polls=2)
-        ready = self.wait_for('host-ready.json')
-        self.assertIn('pid', ready)
-        self.assertIn('started', ready)
-        self.assertIn('beat', ready)
+            agent.host(self.args, report, idle_polls=1)
+        self.assertFalse((self.mailbox / 'host-ready.json').exists())
+
+    def test_stop_between_accept_and_start_interrupts_the_goal(self):
+        report = {}
+        original = self.game.request
+        calls = [0]
+
+        def stop_after_validation(command, expected_revision=None):
+            if command == 'status':
+                calls[0] += 1
+                if calls[0] == 2:  # the status read inside run(), after the accept validation
+                    self.game.state['stopRevision'] += 1
+            return original(command, expected_revision)
+
+        with patch.object(agent, 'game_request', stop_after_validation), \
+                patch.object(agent, 'chat', side_effect=AssertionError('expired goal was dispatched')):
+            self.post('g1')
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'interrupted')
+
+    def test_world_change_between_accept_and_start_interrupts_the_goal(self):
+        report = {}
+        original = self.game.request
+        calls = [0]
+
+        def world_change_after_validation(command, expected_revision=None):
+            if command == 'status':
+                calls[0] += 1
+                if calls[0] == 2:
+                    self.game.state['worldSession'] = 'world-2'
+            return original(command, expected_revision)
+
+        with patch.object(agent, 'game_request', world_change_after_validation), \
+                patch.object(agent, 'chat', side_effect=AssertionError('expired goal was dispatched')):
+            self.post('g1')
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
 
     def test_failed_goal_does_not_stop_the_host(self):
         report = {}

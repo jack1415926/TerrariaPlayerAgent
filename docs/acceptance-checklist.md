@@ -33,9 +33,10 @@
 | 单活动目标：新目标替换旧目标，不做队列；同一 id 不重复启动 | 是（收到取消后接新单） | 是（仅编译，队列时先 RequestStop） | 不涉及 | 游戏侧替换时的输入取消 |
 | 目标文件协议：goal／ack／result，宿主先消费再执行 | 是 | 是（仅编译） | 不涉及 | 聊天命令写入与状态显示 |
 | 接单前校验 stopRevision、worldSession、世界与暂停状态 | 是 | 是（仅编译，发布时记录身份） | 不涉及 | 真实 stop 与发布时序 |
+| 接单后执行前再校验：任务绑定校验时的 stopRevision／worldSession，过期即中断 | 是 | 不需要 | 不涉及 | 校验与启动之间的真实 stop |
 | stop 后未执行目标失效；遗留目标不重放；空目标拒绝 | 是 | 是（仅编译，stop／remove／退世界清理待发目标） | 不涉及 | 宿主重启时机 |
 | 连续 A／B／C：只保留最新有效目标 | 是 | 是（仅编译，新目标覆盖待发目标） | 不涉及 | 游戏侧连续快速下达 |
-| 宿主心跳：host-ready 过期时游戏侧拒绝下单 | 是（心跳字段与更新） | 是（仅编译，15 秒窗口） | 不涉及 | 宿主异常退出后的真实提示 |
+| 宿主心跳：host-ready 过期时游戏侧拒绝下单 | 是（独立心跳线程：执行任务、等待 API、待机都刷新；正常退出删除文件） | 是（仅编译，15 秒窗口） | 不涉及 | 宿主异常退出后的真实提示 |
 | 游戏内 `/tpa goal` 入口 | 不适用 | 是（仅编译） | 未开始 | 未开始 |
 | 游戏内状态回传（已接收／完成） | 不适用 | 是（仅编译，旧目标结果按 id 标为忽略） | 未开始 | 未开始 |
 
@@ -67,7 +68,7 @@ python -B -m unittest discover -s agent -p test_run.py -v
 | 文件 | 方向 | 字段 |
 | --- | --- | --- |
 | `goal.json` | 游戏 → 宿主 | `id`、`text`、`stopRevision`、`worldSession`；宿主读取后立即删除，不重放 |
-| `host-ready.json` | 宿主 → 游戏 | `pid`、`started`、`beat`；启动后写入，宿主驻留期间按 5 秒刷新心跳，过期 15 秒视为不在线 |
+| `host-ready.json` | 宿主 → 游戏 | `pid`、`started`、`beat`；独立心跳每 5 秒刷新（执行任务和等待 API 期间同样刷新），过期 15 秒视为不在线；宿主正常退出时删除 |
 | `goal-ack-<id>-<status>.json` | 宿主 → 游戏 | `id`、`status`（accepted／rejected／duplicate／stale）、`reason` |
 | `goal-result-<id>.json` | 宿主 → 游戏 | `id`、`status`（finished／budget_exhausted／interrupted／unknown／failed）、`summary`、`turns` |
 
@@ -83,6 +84,6 @@ python -B -m unittest discover -s agent -p test_run.py -v
 
 ## 本轮离线证据（2026-11-10）
 
-- `python -B -m unittest discover -s agent -p test_run.py`：48 项通过（本轮新增 7 项：stop 后目标失效、跨会话目标失效、暂停拒绝、A/B/C 只留最新、remove 中断、退世界中断、心跳字段）。
+- `python -B -m unittest discover -s agent -p test_run.py`：51 项通过（本轮新增 4 项）。新增的 4 项在上一提交 `dff8e15` 上全部失败、在当前提交上通过：长任务期间心跳停止、退出后残留 host-ready、校验后被 stop 仍执行、校验后换世界仍执行。
 - C# 编译打包：0 警告 0 错误，`TerrariaPlayerAgent.tmod` 87.7 KB（在无临时目录冲突的干净副本中构建）。
 - 未启动游戏，未调用真实 API；所有游戏内行为仍属“游戏待验”。
