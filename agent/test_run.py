@@ -484,7 +484,10 @@ class HostTests(unittest.TestCase):
         self.addCleanup(self.idle_patch.stop)
         self.args = SimpleNamespace(stop=False, check_api=False, goal=None, goal_file='', max_turns=2)
 
-    def post(self, goal_id, text='Walk right'):
+    def post(self, goal_id, text='Walk right', preempt=False):
+        if preempt:
+            # QueueGoal() calls RequestStop(): a new goal stops input and bumps the revision.
+            self.game.state['stopRevision'] += 1
         path = self.mailbox / 'goal.json'
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps({'id': goal_id, 'text': text}), encoding='utf-8')
@@ -543,7 +546,7 @@ class HostTests(unittest.TestCase):
         self.assertEqual(len(report['goals']), 1)
         self.assertEqual(report['goals'][0]['status'], 'finished')
 
-    def test_second_goal_replaces_the_running_one(self):
+    def test_new_goal_stops_the_running_task_and_takes_over(self):
         report = {}
         seen = set()
         first = []
@@ -551,8 +554,8 @@ class HostTests(unittest.TestCase):
         def chat(messages, tools=None):
             if not first:
                 first.append(1)
-                self.post('g2', 'Mine stone')
-                self.game.state['stopRevision'] += 1
+                # The player posts a new goal while the first task is running.
+                self.post('g2', 'Mine stone', preempt=True)
                 return {'choices': [{'message': {'role': 'assistant', 'content': 'old goal aborted'}}]}
             return {'choices': [{'message': {'role': 'assistant', 'content': 'new goal done'}}]}
 

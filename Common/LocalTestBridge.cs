@@ -17,6 +17,7 @@ public sealed class LocalTestBridge : ModSystem
     private int pollTicks;
     private string directory = "";
     private string? pendingGoal;
+    private string? latestGoalId;
     internal bool Enabled => Program.LaunchParameters.ContainsKey("-tpatest");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -63,6 +64,8 @@ public sealed class LocalTestBridge : ModSystem
             message = "The host has not taken the previous goal yet.";
             return false;
         }
+        // A new goal preempts the running one: stop local input and invalidate its task version.
+        ModContent.GetInstance<DemoPlayerSystem>().RequestStop();
         pendingGoal = text;
         message = "Goal queued for the host.";
         return true;
@@ -71,10 +74,11 @@ public sealed class LocalTestBridge : ModSystem
     private void PublishGoal()
     {
         if (pendingGoal == null) return;
+        string id = Guid.NewGuid().ToString("N");
         string temporary = Path.Combine(directory, "goal.tmp");
         File.WriteAllText(temporary, JsonSerializer.Serialize(new
         {
-            id = Guid.NewGuid().ToString("N"),
+            id,
             text = pendingGoal,
             stopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision
         }));
@@ -82,10 +86,12 @@ public sealed class LocalTestBridge : ModSystem
         {
             File.Move(temporary, Path.Combine(directory, "goal.json"), true);
             pendingGoal = null;
+            latestGoalId = id;
         }
         catch (IOException)
         {
             // Keep it queued; the previous goal file is still unread.
+            TryDelete(temporary);
         }
     }
 
@@ -103,7 +109,15 @@ public sealed class LocalTestBridge : ModSystem
             JsonElement root = document.RootElement;
             string Status(string name) =>
                 root.TryGetProperty(name, out JsonElement value) ? value.GetString() ?? "" : "";
-            string text = GoalMessage(ack, Status("status"), ack ? Status("reason") : Status("summary"));
+            string status = Status("status");
+            if (!ack && latestGoalId != null && Status("id") != latestGoalId)
+            {
+                // A result from an earlier goal must not look like the current goal's summary.
+                File.Delete(file);
+                Main.NewText($"[TPA] Ignored a late result for an earlier goal: {status}.", Color.Orange);
+                return;
+            }
+            string text = GoalMessage(ack, status, ack ? Status("reason") : Status("summary"));
             File.Delete(file);
             Main.NewText(text, Color.LightGreen);
         }

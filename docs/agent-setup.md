@@ -36,7 +36,7 @@ explore.md包含教程和有限探索／挖掘目标。宿主在调用模型前�
 .\scripts\run-agent.ps1 -HostMode
 ```
 
-宿主每0.2秒检查`.local/tModLoader/TPA/goal.json`；有目标就以该文本执行一轮，写完`goal-ack-*`和`goal-result-*`后回到待机。没有目标时不请求模型，单个目标失败不退出。`-MaxGoals N`执行N个目标后退出，便于验证。游戏内`/tpa goal <文本>`（需`-tpatest`）已接入：命令把目标写入`goal.json`，宿主写回的确认与结果在聊天框显示为`[TPA]`消息。C#侧只做了编译验证，未实机；协议字段和四列状态见 [集中实测清单](acceptance-checklist.md)。
+宿主每0.2秒检查`.local/tModLoader/TPA/goal.json`；有目标就以该文本执行一轮，写完`goal-ack-*`和`goal-result-*`后回到待机。没有目标时不请求模型，单个目标失败不退出。`-MaxGoals N`执行N个目标后退出，便于验证。游戏内`/tpa goal <文本>`（需`-tpatest`）已接入：命令先`RequestStop`停止当前主动输入、递增stopRevision使旧任务失效，再把目标写入`goal.json`；宿主写回的确认与结果在聊天框显示为`[TPA]`消息，旧目标的结果按id标为“已忽略”。C#侧只做了编译验证，未实机；协议字段和四列状态见 [集中实测清单](acceptance-checklist.md)。
 
 系统提示词只发能力、规则和限制；目标单独传入，附当前观察和工具定义，不每轮重发整份项目文档／百科。
 
