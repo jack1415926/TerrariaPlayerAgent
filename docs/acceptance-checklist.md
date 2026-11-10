@@ -31,8 +31,11 @@
 | 无目标时不请求模型 | 是 | 不需要 | 不涉及 | 无 |
 | 每个目标独立轮次预算、对话历史、报告 | 是 | 不需要 | 不涉及 | 无 |
 | 单活动目标：新目标替换旧目标，不做队列；同一 id 不重复启动 | 是（收到取消后接新单） | 是（仅编译，队列时先 RequestStop） | 不涉及 | 游戏侧替换时的输入取消 |
-| 目标文件协议：goal／ack／result，宿主先消费再执行 | 是 | 待实现 C# 读写端 | 不涉及 | 聊天命令写入与状态显示 |
-| 遗留目标不重放，空目标拒绝 | 是 | 不需要 | 不涉及 | 宿主重启时机 |
+| 目标文件协议：goal／ack／result，宿主先消费再执行 | 是 | 是（仅编译） | 不涉及 | 聊天命令写入与状态显示 |
+| 接单前校验 stopRevision、worldSession、世界与暂停状态 | 是 | 是（仅编译，发布时记录身份） | 不涉及 | 真实 stop 与发布时序 |
+| stop 后未执行目标失效；遗留目标不重放；空目标拒绝 | 是 | 是（仅编译，stop／remove／退世界清理待发目标） | 不涉及 | 宿主重启时机 |
+| 连续 A／B／C：只保留最新有效目标 | 是 | 是（仅编译，新目标覆盖待发目标） | 不涉及 | 游戏侧连续快速下达 |
+| 宿主心跳：host-ready 过期时游戏侧拒绝下单 | 是（心跳字段与更新） | 是（仅编译，15 秒窗口） | 不涉及 | 宿主异常退出后的真实提示 |
 | 游戏内 `/tpa goal` 入口 | 不适用 | 是（仅编译） | 未开始 | 未开始 |
 | 游戏内状态回传（已接收／完成） | 不适用 | 是（仅编译，旧目标结果按 id 标为忽略） | 未开始 | 未开始 |
 
@@ -63,8 +66,8 @@ python -B -m unittest discover -s agent -p test_run.py -v
 
 | 文件 | 方向 | 字段 |
 | --- | --- | --- |
-| `goal.json` | 游戏 → 宿主 | `id`、`text`；宿主读取后立即删除，不重放 |
-| `host-ready.json` | 宿主 → 游戏 | `pid`、`started`；宿主启动检查完成后写入，表示可以接单 |
+| `goal.json` | 游戏 → 宿主 | `id`、`text`、`stopRevision`、`worldSession`；宿主读取后立即删除，不重放 |
+| `host-ready.json` | 宿主 → 游戏 | `pid`、`started`、`beat`；启动后写入，宿主驻留期间按 5 秒刷新心跳，过期 15 秒视为不在线 |
 | `goal-ack-<id>-<status>.json` | 宿主 → 游戏 | `id`、`status`（accepted／rejected／duplicate／stale）、`reason` |
 | `goal-result-<id>.json` | 宿主 → 游戏 | `id`、`status`（finished／budget_exhausted／interrupted／unknown／failed）、`summary`、`turns` |
 
@@ -74,4 +77,12 @@ python -B -m unittest discover -s agent -p test_run.py -v
 
 - FakeGame 与临时邮箱只证明状态机与文件协议，不证明游戏线程真的按这个节奏消费文件。
 - `finished` 只表示模型正常结束，不表示目标事实达成；证据仍要看动作结果和游戏状态。
+- 抢占延迟：宿主在动作等待或 API 轮询中约 0.1–0.2 秒发现版本变化；卡在单次游戏请求时最长 5 秒。
+- 暂停时提交目标会被拒绝并提示恢复；不会替玩家排队等待。
 - 本清单不含 P3 近敌反应与 P4 拾取，两者都未开始。
+
+## 本轮离线证据（2026-11-10）
+
+- `python -B -m unittest discover -s agent -p test_run.py`：48 项通过（本轮新增 10 项：stop 后目标失效、跨会话目标失效、暂停拒绝、A/B/C 只留最新、remove／退世界中断、心跳字段等）。
+- C# 编译打包：0 警告 0 错误，`TerrariaPlayerAgent.tmod` 87.7 KB（在无临时目录冲突的干净副本中构建）。
+- 未启动游戏，未调用真实 API；所有游戏内行为仍属“游戏待验”。

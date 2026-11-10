@@ -17,6 +17,8 @@ public sealed class LocalTestBridge : ModSystem
     private int pollTicks;
     private string directory = "";
     private string? pendingGoal;
+    private long pendingGoalStopRevision;
+    private string pendingGoalWorldSession = "";
     private string? latestGoalId;
     internal bool Enabled => Program.LaunchParameters.ContainsKey("-tpatest");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
@@ -59,16 +61,41 @@ public sealed class LocalTestBridge : ModSystem
             message = "Enter a single-player world first.";
             return false;
         }
-        if (pendingGoal != null || File.Exists(Path.Combine(directory, "goal.json")))
+        if (!HostAlive())
         {
-            message = "The host has not taken the previous goal yet.";
+            message = "Start the Agent host first: scripts/run-agent.ps1 -HostMode.";
             return false;
         }
-        // A new goal preempts the running one: stop local input and invalidate its task version.
+        // A new goal preempts the running one and replaces any goal still waiting to be sent.
+        // The stamp is taken now: a stop that lands before the file is published must not look valid.
         ModContent.GetInstance<DemoPlayerSystem>().RequestStop();
         pendingGoal = text;
+        pendingGoalStopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision;
+        pendingGoalWorldSession = ModContent.GetInstance<WorldSession>().Id;
         message = "Goal queued for the host.";
         return true;
+    }
+
+    internal void CancelPendingGoal()
+    {
+        if (directory.Length == 0) return;
+        pendingGoal = null;
+        pendingGoalStopRevision = 0;
+        pendingGoalWorldSession = "";
+        TryDelete(Path.Combine(directory, "goal.tmp"));
+    }
+
+    private bool HostAlive()
+    {
+        try
+        {
+            var file = new FileInfo(Path.Combine(directory, "host-ready.json"));
+            return file.Exists && (DateTime.UtcNow - file.LastWriteTimeUtc).TotalSeconds < 15;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private void PublishGoal()
@@ -80,7 +107,8 @@ public sealed class LocalTestBridge : ModSystem
         {
             id,
             text = pendingGoal,
-            stopRevision = ModContent.GetInstance<DemoPlayerSystem>().StopRevision
+            stopRevision = pendingGoalStopRevision,
+            worldSession = pendingGoalWorldSession
         }));
         try
         {
@@ -93,6 +121,12 @@ public sealed class LocalTestBridge : ModSystem
             // Keep it queued; the previous goal file is still unread.
             TryDelete(temporary);
         }
+    }
+
+    public override void OnWorldUnload()
+    {
+        CancelPendingGoal();
+        latestGoalId = null;
     }
 
     private void ReportGoalFiles()
@@ -109,17 +143,19 @@ public sealed class LocalTestBridge : ModSystem
             JsonElement root = document.RootElement;
             string Status(string name) =>
                 root.TryGetProperty(name, out JsonElement value) ? value.GetString() ?? "" : "";
+            string id = Status("id");
+            string tag = id.Length >= 6 ? id[..6] : id;
             string status = Status("status");
-            if (!ack && latestGoalId != null && Status("id") != latestGoalId)
+            if (!ack && latestGoalId != null && id != latestGoalId)
             {
                 // A result from an earlier goal must not look like the current goal's summary.
                 File.Delete(file);
-                Main.NewText($"[TPA] Ignored a late result for an earlier goal: {status}.", Color.Orange);
+                Main.NewText($"[TPA] Ignored a late result for goal {tag}: {status}.", Color.Orange);
                 return;
             }
             string text = GoalMessage(ack, status, ack ? Status("reason") : Status("summary"));
             File.Delete(file);
-            Main.NewText(text, Color.LightGreen);
+            Main.NewText($"[TPA {tag}] {text}", Color.LightGreen);
         }
         catch (IOException)
         {
@@ -134,20 +170,20 @@ public sealed class LocalTestBridge : ModSystem
     private static string GoalMessage(bool ack, string status, string detail) => ack
         ? status switch
         {
-            "accepted" => "[TPA] Goal accepted; the host is working on it.",
-            "duplicate" => "[TPA] This goal id was already handled; duplicate ignored.",
-            "stale" => "[TPA] Leftover goal from a previous host run; not replayed.",
-            "rejected" => $"[TPA] Goal rejected: {detail}",
-            _ => $"[TPA] {status}: {detail}"
+            "accepted" => "Goal accepted; the host is working on it.",
+            "duplicate" => "This goal id was already handled; duplicate ignored.",
+            "stale" => "This goal is no longer valid; it will not run.",
+            "rejected" => $"Goal rejected: {detail}",
+            _ => $"{status}: {detail}"
         }
         : status switch
         {
-            "finished" => $"[TPA] Goal finished (model ended normally): {detail}",
-            "budget_exhausted" => "[TPA] Turn budget used up; verify the result before trusting it.",
-            "interrupted" => "[TPA] Goal interrupted.",
-            "unknown" => "[TPA] Outcome unknown; observe before retrying.",
-            "failed" => $"[TPA] Goal failed: {detail}",
-            _ => $"[TPA] {status}: {detail}"
+            "finished" => $"Goal finished (model ended normally): {detail}",
+            "budget_exhausted" => "Turn budget used up; verify the result before trusting it.",
+            "interrupted" => "Goal interrupted.",
+            "unknown" => "Outcome unknown; observe before retrying.",
+            "failed" => $"Goal failed: {detail}",
+            _ => $"{status}: {detail}"
         };
 
     private static void TryDelete(string file)

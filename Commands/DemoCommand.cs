@@ -129,11 +129,13 @@ public sealed class DemoCommand : ModCommand
         }
         else if (action == "remove")
         {
+            ModContent.GetInstance<LocalTestBridge>().CancelPendingGoal();
             system.Remove();
             caller.Reply("Demo removed.");
         }
         else if (action == "stop")
         {
+            ModContent.GetInstance<LocalTestBridge>().CancelPendingGoal();
             system.RequestStop();
             caller.Reply("Demo input stopped (gravity and inertia still apply).");
         }

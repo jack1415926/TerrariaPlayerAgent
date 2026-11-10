@@ -35,6 +35,8 @@ class FakeGame:
             if self.cancel:
                 self.state['stopRevision'] += 1
             for key in ('moveTicks', 'jumpTicks', 'attackTicks', 'itemAnimation'):
+                if actor is None:
+                    break
                 if self.hold_active:
                     continue
                 if key == 'moveTicks' and actor[key] and not self.blocked:
@@ -42,14 +44,15 @@ class FakeGame:
                 actor[key] = max(0, actor[key] - 6)
         else:
             self.commands.append((command, copy.deepcopy(self.state)))
-            if command.startswith('/tpa right') and not self.reject:
+            if actor is not None and command.startswith('/tpa right') and not self.reject:
                 actor['moveTicks'] = 30
-            if command.startswith('/tpa attack') and not self.reject:
+            if actor is not None and command.startswith('/tpa attack') and not self.reject:
                 actor['attackTicks'] = 18
             if command == '/tpa stop':
                 self.state['stopRevision'] += 1
                 self.hold_active = False
-                actor['moveTicks'] = actor['attackTicks'] = 0
+                if actor is not None:
+                    actor['moveTicks'] = actor['attackTicks'] = 0
         return dict(ok=True, accepted=not self.reject, reply='test', state=copy.deepcopy(self.state))
 
 
@@ -484,13 +487,22 @@ class HostTests(unittest.TestCase):
         self.addCleanup(self.idle_patch.stop)
         self.args = SimpleNamespace(stop=False, check_api=False, goal=None, goal_file='', max_turns=2)
 
-    def post(self, goal_id, text='Walk right', preempt=False):
+    def post(self, goal_id, text='Walk right', preempt=False, stamp=None, session=None):
         if preempt:
-            # QueueGoal() calls RequestStop(): a new goal stops input and bumps the revision.
+            # QueueGoal() calls RequestStop() before stamping and publishing the goal.
             self.game.state['stopRevision'] += 1
+        payload = {'id': goal_id, 'text': text}
+        revision = stamp if stamp is not None else (
+            self.game.state['stopRevision'] if preempt else None)
+        if revision is not None:
+            payload['stopRevision'] = revision
+        world = session if session is not None else (
+            self.game.state['worldSession'] if preempt else None)
+        if world:
+            payload['worldSession'] = world
         path = self.mailbox / 'goal.json'
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'id': goal_id, 'text': text}), encoding='utf-8')
+        temporary.write_text(json.dumps(payload), encoding='utf-8')
         temporary.replace(path)
 
     def wait_for(self, name, timeout=5):
@@ -611,6 +623,98 @@ class HostTests(unittest.TestCase):
             agent.host(self.args, report, idle_polls=2, max_goals=1)
         self.assertEqual(len(report['goals']), 1)
         self.assertEqual(report['goals'][0]['status'], 'finished')
+
+    def test_stop_after_posting_makes_the_goal_stale(self):
+        report = {}
+        self.post('g1', stamp=self.game.state['stopRevision'])
+        self.game.state['stopRevision'] += 1  # /tpa stop lands before the host reads the goal
+        with patch.object(agent, 'chat', side_effect=AssertionError('stale goal ran')):
+            self.assertTrue(agent.host_tick(self.args, report, set()))
+        self.assertEqual(self.wait_for('goal-ack-g1-stale.json')['status'], 'stale')
+        self.assertEqual(report['goals'], [])
+
+    def test_goal_from_another_world_session_is_stale(self):
+        report = {}
+        self.post('g1', session='world-old')
+        with patch.object(agent, 'chat', side_effect=AssertionError('other world goal ran')):
+            self.assertTrue(agent.host_tick(self.args, report, set()))
+        self.assertEqual(self.wait_for('goal-ack-g1-stale.json')['status'], 'stale')
+        self.assertEqual(report['goals'], [])
+
+    def test_paused_game_rejects_a_new_goal_without_running_it(self):
+        report = {}
+        self.game.state['paused'] = True
+        self.post('g1')
+        with patch.object(agent, 'chat', side_effect=AssertionError('paused goal ran')):
+            self.assertTrue(agent.host_tick(self.args, report, set()))
+        self.assertEqual(self.wait_for('goal-ack-g1-rejected.json')['status'], 'rejected')
+        self.assertEqual(report['goals'], [])
+
+    def test_three_quick_goals_keep_only_the_latest(self):
+        report = {}
+        calls = []
+
+        def chat(messages, tools=None):
+            calls.append(1)
+            return {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1', 'first', preempt=True)
+            self.post('g2', 'second', preempt=True)
+            self.post('g3', 'third', preempt=True)
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(calls, [1])
+        self.assertEqual([g['id'] for g in report['goals']], ['g3'])
+        self.assertEqual(self.wait_for('goal-result-g3.json')['status'], 'finished')
+
+    def test_remove_during_task_interrupts_instead_of_finishing(self):
+        report = {}
+        original = self.game.request
+
+        def remove_after_dispatch(command, expected_revision=None):
+            reply = original(command, expected_revision)
+            if command.startswith('/tpa right'):
+                self.game.state['actor'] = None
+            return reply
+
+        def chat(messages, tools=None):
+            return {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'c', 'function': {'name': 'game_actions',
+                                         'arguments': json.dumps({'commands': ['/tpa right 1']})}}]}}]}
+
+        with patch.object(agent, 'game_request', remove_after_dispatch), patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1')
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
+
+    def test_world_exit_during_task_interrupts_instead_of_finishing(self):
+        report = {}
+        original = self.game.request
+
+        def exit_after_dispatch(command, expected_revision=None):
+            reply = original(command, expected_revision)
+            if command.startswith('/tpa right'):
+                self.game.state['gameMenu'] = True
+            return reply
+
+        def chat(messages, tools=None):
+            return {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'c', 'function': {'name': 'game_actions',
+                                         'arguments': json.dumps({'commands': ['/tpa right 1']})}}]}}]}
+
+        with patch.object(agent, 'game_request', exit_after_dispatch), patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1')
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
+
+    def test_host_ready_carries_a_heartbeat(self):
+        report = {}
+        with patch.object(agent, 'chat', side_effect=AssertionError('idle host called the model')):
+            agent.host(self.args, report, idle_polls=2)
+        ready = self.wait_for('host-ready.json')
+        self.assertIn('pid', ready)
+        self.assertIn('started', ready)
+        self.assertIn('beat', ready)
 
     def test_failed_goal_does_not_stop_the_host(self):
         report = {}

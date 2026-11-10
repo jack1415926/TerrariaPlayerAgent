@@ -117,6 +117,7 @@ REQUEST_TIMEOUT = 5
 RESUME_TIMEOUT = 15
 TICK_STALL_SECONDS = 2
 IDLE_POLL_SECONDS = 0.2
+HEARTBEAT_SECONDS = 5
 GOAL_TEXT_LIMIT = 500
 
 
@@ -224,6 +225,8 @@ class TaskControl:
             raise TaskInterrupted("User stopped/removed the AI; old task cancelled.")
         if self.state["gameMenu"] or self.state["netMode"] != 0:
             raise TaskInterrupted("The single-player world is no longer running.")
+        if self.world_session and self.state.get("worldSession") and self.state["worldSession"] != self.world_session:
+            raise TaskInterrupted("The world session changed; this task no longer owns the world.")
         if self.state["paused"]:
             raise GameSuspended("The game is paused; no new command was dispatched.")
         return self.state
@@ -615,6 +618,23 @@ def host_tick(args, report, seen):
     if not text or len(text) > GOAL_TEXT_LIMIT:
         goal_ack(goal, "rejected", f"Goal text must be 1-{GOAL_TEXT_LIMIT} characters.")
         return True
+    try:
+        current = observation(game_request("status"))
+    except INTERRUPTIONS as exc:
+        goal_ack(goal, "rejected", f"The game did not answer: {exc}")
+        return True
+    if current["gameMenu"] or current["netMode"] != 0:
+        goal_ack(goal, "rejected", "Enter a running single-player world first.")
+        return True
+    if current["paused"]:
+        goal_ack(goal, "rejected", "The game is paused; resume it and post the goal again.")
+        return True
+    if goal.get("stopRevision") is not None and current["stopRevision"] != goal["stopRevision"]:
+        goal_ack(goal, "stale", "A stop was issued after this goal was posted.")
+        return True
+    if goal.get("worldSession") and current.get("worldSession") and goal["worldSession"] != current["worldSession"]:
+        goal_ack(goal, "stale", "The world session changed after this goal was posted.")
+        return True
     goal_ack(goal, "accepted")
     entry = {"id": goal["id"], "text": text}
     report["goals"].append(entry)
@@ -636,7 +656,8 @@ def host(args, report, idle_polls=None, max_goals=0):
     """Serve goals from the mailbox until max_goals is reached or the host idles out."""
     report.update(mode="host", goals=[], outcome="host_stopped")
     started = time.time()
-    _write_json(MAILBOX / "host-ready.json", {"pid": os.getpid(), "started": started})
+    beat = {"pid": os.getpid(), "started": started, "beat": started}
+    _write_json(MAILBOX / "host-ready.json", beat)
     pending = MAILBOX / "goal.json"
     try:
         leftover = pending.stat().st_mtime < started
@@ -649,6 +670,11 @@ def host(args, report, idle_polls=None, max_goals=0):
     seen = set()
     idle = 0
     while True:
+        now = time.time()
+        if now - beat["beat"] >= HEARTBEAT_SECONDS:
+            # The game side refuses goals when this file goes stale, so keep it fresh while idle.
+            beat["beat"] = now
+            _write_json(MAILBOX / "host-ready.json", beat)
         if host_tick(args, report, seen):
             idle = 0
             if max_goals and len(report["goals"]) >= max_goals:
