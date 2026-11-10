@@ -80,6 +80,7 @@ Set-Location 'F:\codex_project\TerrariaPlayerAgent'
 ## 文档入口
 
 - [阶段性验收](docs/milestone-acceptance.md)：当前通过范围、实际证据、未完成项。
+- [集中实测清单](docs/acceptance-checklist.md)：P0／P1／P2 的离线、构建、真实 API、游戏待验四列状态。
 - [开发反思与经验](docs/development-experience.md)：本阶段决策、问题分类及后续做法。
 - [下一步待办](TODO.md)：当前优先级、每批交付与验收条件。
 - [技术设计](docs/technical-design.md)：当前模块职责与原生调用链。

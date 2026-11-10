@@ -30,6 +30,14 @@ explore.md包含教程和有限探索／挖掘目标。宿主在调用模型前�
 
 普通自定义Goal不会自动重设已有范围。不传Goal／GoalFile仍使用weapon-test.md历史武器任务；该任务目标与探索不同，不建议把它当默认自由游玩入口。`-CheckApi`仅检查连通，按需使用，不在每次运行前重复调用。
 
+### 常驻宿主（离线可用）
+
+```powershell
+.\scripts\run-agent.ps1 -HostMode
+```
+
+宿主每0.2秒检查`.local/tModLoader/TPA/goal.json`；有目标就以该文本执行一轮，写完`goal-ack-*`和`goal-result-*`后回到待机。没有目标时不请求模型，单个目标失败不退出。`-MaxGoals N`执行N个目标后退出，便于验证。游戏内`/tpa goal`入口的C#侧尚未实现，当前只有文件协议；协议字段和四列状态见 [集中实测清单](acceptance-checklist.md)。
+
 系统提示词只发能力、规则和限制；目标单独传入，附当前观察和工具定义，不每轮重发整份项目文档／百科。
 
 ## 工具语义
@@ -76,6 +84,6 @@ stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动
 
 ## 已有检查与用量
 
-离线检查入口：`python -m unittest discover -s agent -p test_run.py -v`。最近27项通过；文档修改不用重跑。游戏机制、停止和最新模型闭环证据集中于阶段报告与validation.md，不每次开工全量重验。
+离线检查入口：`python -m unittest discover -s agent -p test_run.py -v`。最近39项通过；文档修改不用重跑。游戏机制、停止和最新模型闭环证据集中于阶段报告与validation.md，不每次开工全量重验。
 
 最新完整任务8次请求累计153,201 tokens，含缓存及重复历史，未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。后续持续任务前再评估有界历史和观察去重，不以大型记忆系统或框架迁移阻塞当前功能。

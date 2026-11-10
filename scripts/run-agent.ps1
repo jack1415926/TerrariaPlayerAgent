@@ -1,4 +1,4 @@
-param([string]$Goal, [string]$GoalFile, [int]$MaxTurns = 0, [switch]$CheckApi, [switch]$Stop)
+param([string]$Goal, [string]$GoalFile, [int]$MaxTurns = 0, [switch]$CheckApi, [switch]$Stop, [switch]$HostMode, [int]$MaxGoals = 0)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $environmentFile = Join-Path $projectRoot '.env'
@@ -16,8 +16,10 @@ $env:PYTHONIOENCODING = 'utf-8'
 $agentArguments = @('-u', (Join-Path $projectRoot 'agent/run.py'))
 if ($CheckApi) { $agentArguments += '--check-api' }
 if ($Stop) { $agentArguments += '--stop' }
+if ($HostMode) { $agentArguments += '--host' }
 if ($Goal) { $agentArguments += @('--goal', $Goal) }
 if ($GoalFile) { $agentArguments += @('--goal-file', $GoalFile) }
 if ($MaxTurns -gt 0) { $agentArguments += @('--max-turns', $MaxTurns) }
+if ($MaxGoals -gt 0) { $agentArguments += @('--max-goals', $MaxGoals) }
 & python @agentArguments
 if ($LASTEXITCODE -ne 0) { throw "Agent exited with code $LASTEXITCODE. See the local report." }

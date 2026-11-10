@@ -346,6 +346,24 @@ class InterruptionTests(unittest.TestCase):
         self.assertEqual(result['outcome'], 'interrupted')
         self.assertEqual(result['interruption'], 'cancelled')
 
+    def test_resume_records_advanced_navigation_sequence_without_claiming_success(self):
+        nav = dict(active=True, sequence=1, status='running', targetX=200)
+        self.game.state['actor']['navigation'] = nav
+        result = self._suspend_then(
+            lambda: self.game.state['actor'].update(navigation=dict(nav, active=False, sequence=2, status='arrived')))
+        evidence = result['evidence']['navigation']
+        self.assertEqual((evidence['before'], evidence['after'], evidence['advanced']), (1, 2, True))
+        self.assertEqual(result['actions'][0]['status'], 'unknown')
+
+    def test_resume_records_unchanged_sequence_as_not_advanced(self):
+        nav = dict(active=True, sequence=1, status='running', targetX=200)
+        self.game.state['actor']['navigation'] = nav
+        result = self._suspend_then(
+            lambda: self.game.state['actor'].update(navigation=dict(nav, active=False)))
+        evidence = result['evidence']['navigation']
+        self.assertEqual((evidence['before'], evidence['after'], evidence['advanced']), (1, 1, False))
+        self.assertEqual(result['actions'][0]['status'], 'unknown')
+
     def test_report_keeps_action_interruption_details(self):
         report = {}
         args = SimpleNamespace(stop=False, check_api=False, goal='Walk', max_turns=2)
@@ -426,6 +444,175 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(seen['command'], '/tpa mine 10 20')
         self.assertEqual(seen['expectedStopRevision'], 3)
         self.assertEqual(list(self.directory.iterdir()), [])
+
+
+class HostTests(unittest.TestCase):
+    """The host serves one goal at a time and must stay honest about each one."""
+
+    def setUp(self):
+        base = Path(os.environ.get('TPA_TEST_MAILBOX') or tempfile.mkdtemp())
+        self.mailbox = base / f"host-{uuid.uuid4().hex[:8]}"
+        try:
+            self.mailbox.mkdir()
+            (self.mailbox / 'probe').write_text('', encoding='utf-8')
+            (self.mailbox / 'probe').unlink()
+        except OSError:
+            self.skipTest('mailbox is not writable here; set TPA_TEST_MAILBOX to a writable directory')
+        self.addCleanup(shutil.rmtree, self.mailbox, ignore_errors=True)
+        self.mailbox_patch = patch.object(agent, 'MAILBOX', self.mailbox)
+        self.mailbox_patch.start()
+        self.addCleanup(self.mailbox_patch.stop)
+        self.game = FakeGame()
+        self.requests = patch.object(agent, 'game_request', self.game.request)
+        self.requests.start()
+        self.addCleanup(self.requests.stop)
+        self.idle_patch = patch.object(agent, 'IDLE_POLL_SECONDS', 0.01)
+        self.idle_patch.start()
+        self.addCleanup(self.idle_patch.stop)
+        self.args = SimpleNamespace(stop=False, check_api=False, goal=None, goal_file='', max_turns=2)
+
+    def post(self, goal_id, text='Walk right'):
+        path = self.mailbox / 'goal.json'
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps({'id': goal_id, 'text': text}), encoding='utf-8')
+        temporary.replace(path)
+
+    def wait_for(self, name, timeout=5):
+        path = self.mailbox / name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.exists():
+                return json.loads(path.read_text(encoding='utf-8-sig'))
+            time.sleep(0.01)
+        self.fail(f'{name} was not written')
+
+    def test_idle_host_makes_no_model_requests(self):
+        report = {}
+        with patch.object(agent, 'chat', side_effect=AssertionError('model called while idle')):
+            agent.host(self.args, report, idle_polls=3)
+        self.assertEqual(report['goals'], [])
+        self.assertEqual(report['outcome'], 'host_stopped')
+
+    def test_leftover_goal_is_marked_stale_and_not_run(self):
+        self.post('old')
+        report = {}
+        with patch.object(agent, 'chat', side_effect=AssertionError('stale goal ran')):
+            agent.host(self.args, report, idle_polls=1)
+        self.assertEqual(self.wait_for('goal-ack-old-stale.json')['status'], 'stale')
+        self.assertEqual(report['goals'], [])
+
+    def test_goal_is_accepted_executed_and_reported(self):
+        report = {}
+        reply = {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+        with patch.object(agent, 'chat', side_effect=lambda *a, **k: reply):
+            self.post('g1')
+            self.assertTrue(agent.host_tick(self.args, report, set()))
+        self.assertEqual(self.wait_for('goal-ack-g1-accepted.json')['status'], 'accepted')
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'finished')
+        self.assertEqual(report['goals'][0]['status'], 'finished')
+
+    def test_duplicate_goal_id_is_not_restarted(self):
+        report = {}
+        seen = set()
+        calls = []
+
+        def chat(messages, tools=None):
+            calls.append(1)
+            return {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1')
+            agent.host_tick(self.args, report, seen)
+            self.post('g1')
+            agent.host_tick(self.args, report, seen)
+        self.assertEqual(self.wait_for('goal-ack-g1-duplicate.json')['status'], 'duplicate')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(report['goals']), 1)
+        self.assertEqual(report['goals'][0]['status'], 'finished')
+
+    def test_second_goal_replaces_the_running_one(self):
+        report = {}
+        seen = set()
+        first = []
+
+        def chat(messages, tools=None):
+            if not first:
+                first.append(1)
+                self.post('g2', 'Mine stone')
+                self.game.state['stopRevision'] += 1
+                return {'choices': [{'message': {'role': 'assistant', 'content': 'old goal aborted'}}]}
+            return {'choices': [{'message': {'role': 'assistant', 'content': 'new goal done'}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1', 'Walk right')
+            agent.host_tick(self.args, report, seen)
+            agent.host_tick(self.args, report, seen)
+        self.assertEqual([g['id'] for g in report['goals']], ['g1', 'g2'])
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
+        self.assertEqual(report['goals'][1]['status'], 'finished')
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'interrupted')
+        self.assertEqual(self.wait_for('goal-result-g2.json')['status'], 'finished')
+
+    def test_turn_budget_is_per_goal(self):
+        report = {}
+        seen = set()
+
+        def chat(messages, tools=None):
+            return {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'c', 'function': {'name': 'game_actions',
+                                         'arguments': json.dumps({'commands': ['status']})}}]}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1')
+            agent.host_tick(self.args, report, seen)
+            self.post('g2')
+            agent.host_tick(self.args, report, seen)
+        self.assertEqual([g['turns'] for g in report['goals']], [2, 2])
+        self.assertEqual([g['status'] for g in report['goals']], ['budget_exhausted', 'budget_exhausted'])
+
+
+    def test_mailbox_keeps_only_the_newest_unread_goal(self):
+        self.post('g1', 'Walk right')
+        self.post('g2', 'Mine stone')
+        goal = agent.poll_goal()
+        self.assertEqual(goal['id'], 'g2')
+        self.assertIsNone(agent.poll_goal())
+
+    def test_empty_goal_is_rejected_and_not_run(self):
+        report = {}
+        with patch.object(agent, 'chat', side_effect=AssertionError('rejected goal ran')):
+            self.post('bad', '   ')
+            self.assertTrue(agent.host_tick(self.args, report, set()))
+        self.assertEqual(self.wait_for('goal-ack-bad-rejected.json')['status'], 'rejected')
+        self.assertEqual(report['goals'], [])
+
+    def test_host_loop_serves_goal_then_returns_to_idle(self):
+        report = {}
+        pending = [{'id': 'g1', 'text': 'Walk right'}]
+        reply = {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+        with patch.object(agent, 'poll_goal', side_effect=lambda: pending.pop(0) if pending else None), \
+                patch.object(agent, 'chat', side_effect=lambda *a, **k: reply):
+            agent.host(self.args, report, idle_polls=2, max_goals=1)
+        self.assertEqual(len(report['goals']), 1)
+        self.assertEqual(report['goals'][0]['status'], 'finished')
+
+    def test_failed_goal_does_not_stop_the_host(self):
+        report = {}
+        seen = set()
+        calls = []
+
+        def chat(messages, tools=None):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('API exploded')
+            return {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+
+        with patch.object(agent, 'chat', side_effect=chat):
+            self.post('g1')
+            agent.host_tick(self.args, report, seen)
+            self.post('g2')
+            agent.host_tick(self.args, report, seen)
+        self.assertEqual([g['status'] for g in report['goals']], ['failed', 'finished'])
 
 
 if __name__ == '__main__':

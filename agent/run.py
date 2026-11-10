@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from urllib import error, request
 import uuid
 
@@ -115,6 +116,20 @@ INTERRUPTIONS = (TaskInterrupted, GameSuspended, TickStalled, Unreachable, Outco
 REQUEST_TIMEOUT = 5
 RESUME_TIMEOUT = 15
 TICK_STALL_SECONDS = 2
+IDLE_POLL_SECONDS = 0.2
+GOAL_TEXT_LIMIT = 500
+
+
+def _sequences(actor):
+    return {"navigation": (actor.get("navigation") or {}).get("sequence"),
+            "mining": (actor.get("mining") or {}).get("sequence")}
+
+
+def _sequence_evidence(before, after):
+    old, new = _sequences(before), _sequences(after)
+    return {kind: {"before": old[kind], "after": new[kind],
+                   "advanced": old[kind] is not None and new[kind] is not None and old[kind] != new[kind]}
+            for kind in old}
 
 
 def _active(actor):
@@ -177,6 +192,7 @@ class TaskControl:
         self.state = state
         self.events = []
         self.takeover = False
+        self.evidence = None
         actor = state.get("actor") or {}
         self.actor_slot = actor.get("slot")
         self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
@@ -201,6 +217,7 @@ class TaskControl:
 
     def resume(self):
         """Wait out a pause or outage, then prove this task still owns the AI."""
+        before = self.state.get("actor") or {}
         deadline = time.monotonic() + RESUME_TIMEOUT
         while time.monotonic() <= deadline:
             try:
@@ -221,6 +238,7 @@ class TaskControl:
                 time.sleep(0.1)
                 continue
             if not _active(actor):
+                self.evidence = _sequence_evidence(before, actor)
                 return state
             if not self.takeover:
                 # A stale input is still running: cancel it before this task stops dispatching.
@@ -240,6 +258,7 @@ class TaskControl:
         if kind == "cancelled":
             if getattr(exc, "state", None) is not None:
                 self.state = exc.state
+            record["evidence"] = self.evidence
             return record
         try:
             self.state = self.resume()
@@ -250,6 +269,7 @@ class TaskControl:
             record["resume"] = {"resumed": False, "reason": str(failed)}
         else:
             record["resume"] = {"resumed": True, "takeover": self.takeover}
+        record["evidence"] = self.evidence
         return record
 
     def wait(self, seconds=0, action=False, actor_before=None):
@@ -310,10 +330,11 @@ def execute_actions(commands, wait, control):
         if actions and actions[-1]["status"] == "running":
             actions[-1].update(status="interrupted" if cancelled else "unknown",
                                reason=record["error"], state=control.state,
-                               interruption=record["kind"])
+                               interruption=record["kind"], evidence=record["evidence"])
         return {"ok": False, "outcome": "interrupted" if cancelled else "unknown",
                 "error": record["error"], "interruption": record["kind"],
-                "resume": record["resume"], "actions": actions, "state": control.state}
+                "evidence": record["evidence"], "resume": record["resume"],
+                "actions": actions, "state": control.state}
 
 
 def _execute_actions(commands, wait, control, actions):
@@ -501,12 +522,14 @@ def run(args, report):
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)})
                 if result.get("outcome") in ("interrupted", "unknown"):
                     report.update(outcome=result["outcome"], error=result["error"],
-                                  interruption=result.get("interruption"), resume=result.get("resume"))
+                                  interruption=result.get("interruption"), resume=result.get("resume"),
+                                  evidence=result.get("evidence"))
                     return
     except INTERRUPTIONS as exc:
         record = control.recover(exc)
         report.update(outcome="interrupted" if record["kind"] == "cancelled" else "unknown",
-                      error=record["error"], interruption=record["kind"], resume=record["resume"])
+                      error=record["error"], interruption=record["kind"],
+                      evidence=record["evidence"], resume=record["resume"])
         print(record["error"], flush=True)
     finally:
         # Preserve the actor and default respawn; only cancel active input.
@@ -520,6 +543,106 @@ def run(args, report):
             print(f"Stop outcome unknown: {exc}", file=sys.stderr)
 
 
+def _read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json(path, payload):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def poll_goal():
+    """Consume one goal message, if any. The file is removed before it is used."""
+    path = MAILBOX / "goal.json"
+    if not path.exists():
+        return None
+    goal = _read_json(path)
+    path.unlink(missing_ok=True)
+    if not isinstance(goal, dict) or not goal.get("id") or not isinstance(goal.get("text"), str):
+        return None
+    return goal
+
+
+def goal_ack(goal, status, reason=""):
+    # One file per status: replacing a file another process has open fails on Windows.
+    _write_json(MAILBOX / f"goal-ack-{goal['id']}-{status}.json",
+                {"id": goal["id"], "status": status, "reason": reason})
+
+
+def goal_result(goal, status, summary="", turns=0):
+    _write_json(MAILBOX / f"goal-result-{goal['id']}.json",
+                {"id": goal["id"], "status": status, "summary": summary, "turns": turns})
+
+
+RESULT_STATUS = {"model_finished": "finished", "budget_exhausted": "budget_exhausted",
+                 "interrupted": "interrupted", "unknown": "unknown"}
+
+
+def host_tick(args, report, seen):
+    """Serve at most one posted goal; returns False when the mailbox was empty."""
+    report.setdefault("goals", [])
+    goal = poll_goal()
+    if goal is None:
+        return False
+    if goal["id"] in seen:
+        goal_ack(goal, "duplicate", "This goal id was already handled.")
+        return True
+    seen.add(goal["id"])
+    text = goal["text"].strip()
+    if not text or len(text) > GOAL_TEXT_LIMIT:
+        goal_ack(goal, "rejected", f"Goal text must be 1-{GOAL_TEXT_LIMIT} characters.")
+        return True
+    goal_ack(goal, "accepted")
+    entry = {"id": goal["id"], "text": text}
+    report["goals"].append(entry)
+    goal_report = {}
+    try:
+        run(SimpleNamespace(stop=False, check_api=False, goal=text, goal_file="",
+                            max_turns=args.max_turns), goal_report)
+    except Exception as exc:  # one failed goal must not stop the host
+        goal_report.update(outcome="failed", error=str(exc))
+    outcome = goal_report.get("outcome")
+    status = RESULT_STATUS.get(outcome, "failed")
+    entry.update(outcome=outcome, status=status, error=goal_report.get("error"),
+                 turns=len(goal_report.get("turns", [])))
+    goal_result(goal, status, goal_report.get("summary") or goal_report.get("error", ""), entry["turns"])
+    return True
+
+
+def host(args, report, idle_polls=None, max_goals=0):
+    """Serve goals from the mailbox until max_goals is reached or the host idles out."""
+    report.update(mode="host", goals=[], outcome="host_stopped")
+    started = time.time()
+    _write_json(MAILBOX / "host-ready.json", {"pid": os.getpid(), "started": started})
+    pending = MAILBOX / "goal.json"
+    try:
+        leftover = pending.stat().st_mtime < started
+    except OSError:
+        leftover = False
+    if leftover:
+        stale = poll_goal()
+        if stale:
+            goal_ack(stale, "stale", "Host restarted; a leftover goal is never replayed.")
+    seen = set()
+    idle = 0
+    while True:
+        if host_tick(args, report, seen):
+            idle = 0
+            if max_goals and len(report["goals"]) >= max_goals:
+                break
+            continue
+        idle += 1
+        if idle_polls is not None and idle >= idle_polls:
+            break
+        time.sleep(IDLE_POLL_SECONDS)
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-api", action="store_true")
@@ -527,16 +650,22 @@ def main():
     parser.add_argument("--goal")
     parser.add_argument("--goal-file", default=str(ROOT / "agent/prompts/weapon-test.md"))
     parser.add_argument("--max-turns", type=int, default=int(os.environ.get("TPA_AGENT_MAX_TURNS", "8")))
+    parser.add_argument("--host", action="store_true")
+    parser.add_argument("--max-goals", type=int, default=0)
     args = parser.parse_args()
     if not 1 <= args.max_turns <= 30:
         parser.error("--max-turns must be between 1 and 30")
     report = {"outcome": "failed"}
     exit_code = 0
     try:
-        run(args, report)
+        if args.host:
+            host(args, report, max_goals=args.max_goals)
+        else:
+            run(args, report)
         if report["outcome"] in ("budget_exhausted", "unknown"):
             exit_code = 1
-        if not args.stop and not args.check_api and not args.goal and Path(args.goal_file).resolve() == ROOT / "agent/prompts/weapon-test.md":
+        if (not args.host and not args.stop and not args.check_api and not args.goal and
+                Path(args.goal_file).resolve() == ROOT / "agent/prompts/weapon-test.md"):
             report["task_verification"] = verify_weapon_task(report)
             if not report["task_verification"]["passed"]:
                 if report["outcome"] == "model_finished":
