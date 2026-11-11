@@ -32,6 +32,7 @@ public sealed class DemoPlayerSystem : ModSystem
     private readonly List<object> combatEvents = new();
     private readonly List<NPC> testEnemies = new();
     private int hitCount, hurtCount, deathCount, respawnCount;
+    internal int ActorGeneration { get; private set; }
 
     internal string Spawn(Player owner)
     {
@@ -76,6 +77,7 @@ public sealed class DemoPlayerSystem : ModSystem
         navigation.Clear();
         ModContent.GetInstance<NativeMining>().Reset();
         Main.player[slot] = actor;
+        ActorGeneration++;
         totalUpdates = 0;
         lastUpdates = 0;
         autoJumpCount = 0;
@@ -262,6 +264,14 @@ public sealed class DemoPlayerSystem : ModSystem
             worldSpawnX = Main.spawnTileX, worldSpawnY = Main.spawnTileY });
     }
 
+    // A respawn is a new instance lifetime for the same slot, so the generation must advance.
+    internal void RecordActorRespawn()
+    {
+        if (Actor == null || !Actor.active) return;
+        ActorGeneration++;
+        RecordRespawn();
+    }
+
     private static void ClearInput(Player player)
     {
         player.controlLeft = player.controlRight = player.controlUp = player.controlDown = false;
@@ -277,6 +287,7 @@ public sealed class DemoPlayerSystem : ModSystem
         if (Actor == null)
             return;
         int slot = Actor.whoAmI;
+        ActorGeneration++;
         // A connecting real client takes priority over the experimental virtual slot.
         bool claimed = Main.netMode == NetmodeID.Server && Netplay.Clients[slot].State != 0;
         if (!claimed)
@@ -403,6 +414,8 @@ public sealed class DemoPlayerSystem : ModSystem
     internal object? Snapshot() => Actor == null ? null : new
     {
         slot = Actor.whoAmI,
+        active = Actor.active,
+        generation = ActorGeneration,
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
         life = Actor.statLife, dead = Actor.dead, respawnTimer = Actor.respawnTimer,

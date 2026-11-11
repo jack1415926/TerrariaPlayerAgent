@@ -69,3 +69,16 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 离线证据（尚未实机）：`dotnet run --project tools/DisplaySync.SelfCheck -c Release` 的 108 项回放检查通过，覆盖正常移动、停止、方向反转、不规则间隔、延迟与丢包、乱序／重复、瞬移、重置、历史有界、px/tick 换算、120 ms 延迟生效、150 ms／9 Tick 外推上限、stale 前后位置连续、移动中突然停止不越界、stale 后恢复（落后／领先、速度反向、恢复后立即停止、连续断线），以及本轮新增的瞬移对照（正常节奏瞬移立即重置、断流后 190 px 正常移动不被误判瞬移、断流中显式传送仍立即重置、显式“未传送”走限速恢复）；模组构建 0 警告 0 错误。回放只证明纯逻辑，不证明游戏画面已平滑。
 
 实机复验时应先看 `/tpamp diag` 的校正量与 stale／外推计数，再看画面是否仍抖；如果客户端实际不会给镜像跑物理更新，锯齿假设不成立，平滑仍正常但收益会变小。
+
+## 服务器只读桥与 Probe（批次 1，2026-11-11）
+
+批次 1 只打通“Python 能读到服务器 AI 的权威状态”，不开放目标与动作。
+
+- `Common/MultiplayerAgentBridge.cs`：服务器侧 ModSystem，在 `PostUpdateEverything` 里每 3 tick 轮询一次邮箱；**只有 `Main.netMode == NetmodeID.Server(2)` 才消费**，客户端不消费。只接受 `status`，其他命令直接拒绝；响应为 `response-<id>.json`，`state` 字段即服务器快照。
+- 服务器快照字段：`agentMode="multiplayer_server"`、`netMode=2`、`worldSession`、`stopRevision`、`tick`、`gameMenu`、`paused`、`focused=null`、`player=null`、`actor`（沿用 `DemoPlayerSystem.Snapshot()` 的完整字段，并新增 `active`、`generation`）。
+- `actor.generation`：Spawn 成功 +1，实际移除 Actor +1，`ModPlayer.OnRespawn`（XML 文档写明服务器也会调用）触发 +1；重复 Remove、失败 Spawn 不递增。generation 与 worldSession 一起标识 AI 实例生命周期。
+- `LocalTestBridge.Poll()` 增加 `netMode != SinglePlayer` 直接返回；与服务器桥互斥，同一目录不会双消费。
+- Python `--probe --agent-mode multiplayer_server`：只发一次 `status`，不读 `goal.json`、不调模型、不执行动作；校验 `netMode=2`、`agentMode`、`player=null`、`actor.slot/generation` 后打印摘要退出。`--probe` 与 `--host`／`--goal`／`--stop`／`--check-api`／`--max-goals`／非默认 `--goal-file` 冲突会在启动前报错；`multiplayer_server` 在批次 1 必须配合 `--probe`。
+- 邮箱路径：Python 启动打印 `Mailbox: <绝对路径>`；两个 C# Bridge 在 `OnModLoad` 记录 `[TPA]`／`[TPA-MP] mailbox=<绝对路径>`。二者必须一致（`play.ps1` 把 `-tmlsavedirectory` 指向 `.local/tModLoader`）。
+
+离线证据：61 项 Python 测试通过（新增模式校验、probe 只发 status、冲突参数、`actor.generation` 等 10 项）；用假服务器桥做了一次文件协议烟测，probe 输出服务器快照、单模拒绝 netMode=2、冲突参数被拒；C# 构建 0 警告 0 错误。尚未实机。

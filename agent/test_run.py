@@ -796,5 +796,83 @@ class HostTests(unittest.TestCase):
         self.assertEqual([g['status'] for g in report['goals']], ['failed', 'finished'])
 
 
+def server_state(**overrides):
+    state = dict(agentMode="multiplayer_server", netMode=2, gameMenu=False, paused=False,
+                 focused=None, worldSession="world-1", tick=500, stopRevision=3, player=None,
+                 actor=dict(slot=200, generation=2, active=True, x=100.0, y=100.0,
+                            velocityX=0.0, velocityY=0.0, life=100, dead=False,
+                            deathCount=0, respawnCount=0, combatEvents=[]))
+    state.update(overrides)
+    return state
+
+
+class AgentModeTests(unittest.TestCase):
+    """Batch 1: the probe must only trust snapshots from the configured game role."""
+
+    def test_accepts_server_snapshot(self):
+        agent.validate_snapshot(agent.observation({"state": server_state(), "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+
+    def test_rejects_client_snapshot_for_server_mode(self):
+        with self.assertRaises(RuntimeError):
+            agent.validate_snapshot(agent.observation({"state": server_state(netMode=1), "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+
+    def test_rejects_mode_value_mismatch(self):
+        with self.assertRaises(RuntimeError):
+            agent.validate_snapshot(agent.observation({"state": server_state(agentMode=None), "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+        with self.assertRaises(RuntimeError):
+            agent.validate_snapshot(agent.observation({"state": server_state(netMode=0), "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+
+    def test_rejects_human_player_in_server_snapshot(self):
+        with self.assertRaises(RuntimeError):
+            agent.validate_snapshot(agent.observation({"state": server_state(player={"slot": 1}), "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+
+    def test_rejects_server_snapshot_without_generation(self):
+        state = server_state()
+        del state["actor"]["generation"]
+        with self.assertRaises(RuntimeError):
+            agent.validate_snapshot(agent.observation({"state": state, "ok": True, "accepted": True, "reply": "Snapshot"}), "multiplayer_server")
+
+    def test_accepts_single_player_snapshot_in_single_mode(self):
+        state = server_state(agentMode=None, netMode=0, player={"slot": 0})
+        agent.validate_snapshot(agent.observation({"state": state, "ok": True, "accepted": True, "reply": "Snapshot"}), "singleplayer")
+
+    def test_probe_sends_only_status_and_never_reads_goals(self):
+        calls = []
+
+        def request(command, expected_revision=None):
+            calls.append(command)
+            return {"ok": True, "accepted": True, "reply": "Snapshot", "state": server_state()}
+
+        report = {}
+        with patch.object(agent, "game_request", side_effect=request), \
+                patch.object(agent, "poll_goal", side_effect=AssertionError("probe read goals")), \
+                patch.object(agent, "chat", side_effect=AssertionError("probe called the model")):
+            agent.probe(SimpleNamespace(agent_mode="multiplayer_server"), report)
+        self.assertEqual(calls, ["status"])
+        self.assertEqual(report["outcome"], "probe_ok")
+        self.assertEqual(report["state"]["actor"]["generation"], 2)
+
+    def test_probe_argument_conflicts(self):
+        base = dict(host=False, goal=None, stop=False, check_api=False, max_goals=0,
+                    goal_file=str(agent.ROOT / "agent/prompts/weapon-test.md"),
+                    agent_mode="multiplayer_server", probe=True)
+        self.assertEqual(agent.probe_conflicts(SimpleNamespace(**base)), [])
+        for name, value in (("host", True), ("goal", "walk"), ("stop", True),
+                            ("check_api", True), ("max_goals", 2)):
+            args = SimpleNamespace(**{**base, name: value})
+            self.assertIn("--" + name.replace("_", "-"), agent.probe_conflicts(args))
+        args = SimpleNamespace(**{**base, "goal_file": "other.md"})
+        self.assertIn("--goal-file", agent.probe_conflicts(args))
+
+    def test_multiplayer_mode_requires_probe(self):
+        args = SimpleNamespace(agent_mode="multiplayer_server", probe=False)
+        self.assertIsNotNone(agent.mode_usage_error(args))
+        args.probe = True
+        self.assertIsNone(agent.mode_usage_error(args))
+
+    def test_mailbox_path_is_absolute(self):
+        self.assertTrue(agent.MAILBOX.is_absolute())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

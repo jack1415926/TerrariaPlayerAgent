@@ -28,6 +28,7 @@ public sealed class LocalTestBridge : ModSystem
         if (!Enabled || Main.dedServ) return;
         directory = Path.Combine(Main.SavePath, "TPA");
         Directory.CreateDirectory(directory);
+        Mod.Logger.Info($"[TPA] mailbox={Path.GetFullPath(directory)}");
     }
 
     public override void PostUpdateInput()
@@ -41,6 +42,8 @@ public sealed class LocalTestBridge : ModSystem
     private void Poll()
     {
         if (directory.Length == 0) return;
+        // Multiplayer traffic belongs to MultiplayerAgentBridge on the server; never consume it here.
+        if (Main.netMode != NetmodeID.SinglePlayer) return;
         if (++pollTicks % 3 != 0) return;
         // Stop has its own mailbox so it cannot be blocked by an Agent status/action request.
         ProcessRequest("stop.json", true);

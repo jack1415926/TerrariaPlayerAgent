@@ -113,6 +113,7 @@ class Unreachable(RuntimeError):
 
 
 INTERRUPTIONS = (TaskInterrupted, GameSuspended, TickStalled, Unreachable, OutcomeUnknown)
+AGENT_MODES = {"singleplayer": 0, "multiplayer_server": 2}
 REQUEST_TIMEOUT = 5
 RESUME_TIMEOUT = 15
 TICK_STALL_SECONDS = 2
@@ -189,8 +190,8 @@ def game_request(command, expected_revision=None):
 def observation(result):
     state = result["state"]
     compact = {key: state.get(key) for key in
-               ("gameMenu", "netMode", "paused", "focused", "worldSession", "tick", "stopRevision",
-                "player", "actor")}
+               ("agentMode", "gameMenu", "netMode", "paused", "focused", "worldSession",
+                "tick", "stopRevision", "player", "actor")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
@@ -570,6 +571,72 @@ def run(args, report, expected=None):
             print(f"Stop outcome unknown: {exc}", file=sys.stderr)
 
 
+def validate_snapshot(state, agent_mode):
+    """Reject a snapshot that does not come from the configured game role."""
+    expected_net = AGENT_MODES.get(agent_mode)
+    if expected_net is None:
+        raise RuntimeError(f"Unknown agent mode: {agent_mode}")
+    if state.get("netMode") != expected_net:
+        raise RuntimeError(f"Snapshot netMode={state.get('netMode')} does not match "
+                           f"agent mode {agent_mode} (expected {expected_net}).")
+    snapshot_mode = state.get("agentMode")
+    if agent_mode == "singleplayer":
+        if snapshot_mode not in (None, "singleplayer"):
+            raise RuntimeError(f"Snapshot agentMode={snapshot_mode} is not singleplayer.")
+    else:
+        if snapshot_mode != agent_mode:
+            raise RuntimeError(f"Snapshot agentMode={snapshot_mode} does not match {agent_mode}.")
+        if state.get("player") is not None:
+            raise RuntimeError("A multiplayer_server snapshot must not describe a human player.")
+    if state.get("gameMenu"):
+        raise RuntimeError("Enter a running world and spawn the AI first.")
+    actor = state.get("actor")
+    if not actor or actor.get("slot") is None:
+        raise RuntimeError("The snapshot has no AI actor.")
+    if agent_mode == "multiplayer_server" and actor.get("generation") is None:
+        raise RuntimeError("The server snapshot has no actor generation.")
+
+
+def probe(args, report):
+    """Batch 1: read one server snapshot. No goal, no model, no game actions."""
+    state = observation(game_request("status"))
+    validate_snapshot(state, args.agent_mode)
+    actor = state.get("actor") or {}
+    summary = {
+        "agentMode": args.agent_mode,
+        "netMode": state.get("netMode"),
+        "worldSession": state.get("worldSession"),
+        "stopRevision": state.get("stopRevision"),
+        "tick": state.get("tick"),
+        "player": state.get("player"),
+        "actor": {key: actor.get(key) for key in
+                  ("slot", "generation", "active", "x", "y", "velocityX", "velocityY", "life", "dead")},
+    }
+    print("Probe: " + json.dumps(summary, ensure_ascii=False), flush=True)
+    report.update(mode="probe", outcome="probe_ok", agent_mode=args.agent_mode, state=state)
+
+
+def probe_conflicts(args):
+    conflicts = []
+    for name, flag in (("host", "--host"), ("goal", "--goal"), ("stop", "--stop"),
+                       ("check_api", "--check-api")):
+        if getattr(args, name, False):
+            conflicts.append(flag)
+    if getattr(args, "max_goals", 0):
+        conflicts.append("--max-goals")
+    default_goal = (ROOT / "agent/prompts/weapon-test.md").resolve()
+    goal_file = getattr(args, "goal_file", None)
+    if goal_file and Path(goal_file).resolve() != default_goal:
+        conflicts.append("--goal-file")
+    return conflicts
+
+
+def mode_usage_error(args):
+    if args.agent_mode == "multiplayer_server" and not args.probe:
+        return "multiplayer_server requires --probe in batch 1; HostMode stays single-player only."
+    return None
+
+
 def _read_json(path):
     try:
         return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -720,20 +787,32 @@ def main():
     parser.add_argument("--max-turns", type=int, default=int(os.environ.get("TPA_AGENT_MAX_TURNS", "8")))
     parser.add_argument("--host", action="store_true")
     parser.add_argument("--max-goals", type=int, default=0)
+    parser.add_argument("--agent-mode", choices=sorted(AGENT_MODES), default="singleplayer")
+    parser.add_argument("--probe", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.max_turns <= 30:
         parser.error("--max-turns must be between 1 and 30")
+    if args.probe:
+        conflicts = probe_conflicts(args)
+        if conflicts:
+            parser.error("--probe cannot be combined with " + ", ".join(conflicts))
+    usage_error = mode_usage_error(args)
+    if usage_error:
+        parser.error(usage_error)
+    print(f"Mailbox: {MAILBOX.resolve()}", flush=True)
     report = {"outcome": "failed"}
     exit_code = 0
     try:
-        if args.host:
+        if args.probe:
+            probe(args, report)
+        elif args.host:
             host(args, report, max_goals=args.max_goals)
         else:
             run(args, report)
         if report["outcome"] in ("budget_exhausted", "unknown"):
             exit_code = 1
-        if (not args.host and not args.stop and not args.check_api and not args.goal and
-                Path(args.goal_file).resolve() == ROOT / "agent/prompts/weapon-test.md"):
+        if (not args.probe and not args.host and not args.stop and not args.check_api and
+                not args.goal and Path(args.goal_file).resolve() == ROOT / "agent/prompts/weapon-test.md"):
             report["task_verification"] = verify_weapon_task(report)
             if not report["task_verification"]["passed"]:
                 if report["outcome"] == "model_finished":

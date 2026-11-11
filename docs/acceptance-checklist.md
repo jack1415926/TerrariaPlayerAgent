@@ -71,12 +71,27 @@
 
 | 条目 | 离线通过 | C# 构建通过 | 真实 API 通过 | 游戏待验 |
 | --- | --- | --- | --- | --- |
+| 服务器只读桥：仅 Server(2) 消费、只接受 status、快照含 agentMode/worldSession/stopRevision/actor.generation | 是（61 项 Python + 假桥烟测） | 是（仅编译） | 不涉及 | Host&Play/远程客户端实际读数 |
+| Probe 模式校验：netMode=2 接受、netMode=1 拒绝、agentMode 不匹配拒绝、player 非空拒绝 | 是 | 是（仅编译） | 不涉及 | 实机快照值 |
+| 邮箱互斥：LocalTestBridge 单机消费、MultiplayerAgentBridge 仅服务器消费 | 代码检查 + 编译 | 是（仅编译） | 不涉及 | 两 Bridge 同进程实测 |
+| 单人 51 项历史测试 | 是（61 项全绿） | 不涉及 | 不涉及 | 无 |
+
+| 条目 | 离线通过 | C# 构建通过 | 真实 API 通过 | 游戏待验 |
+| --- | --- | --- | --- | --- |
 | 快照序号／服务器 tick／接收时间／校正量诊断，有界记录 | 是 | 是（仅编译） | 不涉及 | `/tpamp diag` 的真实读数 |
 | 权威状态与显示状态分离；乱序丢弃、停止收敛、瞬移重置、丢包 stale | 是（108 项回放） | 是（仅编译） | 不涉及 | 客户端是否仍抖 |
 | stale 后恢复：限速收敛、不瞬间回退、连续断线有界 | 是（108 项回放） | 是（仅编译） | 不涉及 | 恢复瞬间的观感 |
 | 瞬移／重生识别：服务器显式标记优先，断流不被误判 | 是（108 项回放） | 是（仅编译） | 不涉及 | 真实重生／传送的位置变化 |
 | 移除／重建／退世界清理显示缓冲 | 是（回放 + 重置路径） | 是（仅编译） | 不涉及 | 实机是否拖影 |
 | 发送频率保持每 6 tick，服务器位置／速度／碰撞／stop 语义未改 | 是（代码未改服务器路径） | 是（仅编译） | 不涉及 | 多人实机移动与停止 |
+
+## 批次 1 离线证据（2026-11-11）
+
+- `python -B -m unittest discover -s agent -p test_run.py`：61 项通过（新增 10 项：服务器快照接受、netMode=1 拒绝、agentMode 不匹配、player 非空、缺 generation、单人快照、probe 只发 status、参数冲突、multiplayer_server 必须配 probe、邮箱绝对路径）。
+- 假服务器桥文件烟测：`--probe --agent-mode multiplayer_server` 打印服务器快照并退出 0；`--agent-mode singleplayer` 对 netMode=2 快照报错退出 1；`--probe --host` 与 `multiplayer_server` 无 probe 均在启动前被拒。
+- C# 构建：0 警告 0 错误，`.tmod` 113.6 KB。
+- `tools/DisplaySync.SelfCheck`：108 项通过（回归）。
+- 未启动游戏、未调真实 API；Host&Play 与远程客户端读数仍待实机。
 
 ## 命令
 
