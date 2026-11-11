@@ -6,5 +6,10 @@
     <TmlInstallPath Condition="'$(TmlInstallPath)' == ''">$(TML_PATH)</TmlInstallPath>
     <ExtraBuildModFlags>-tmlsavedirectory &quot;$(MSBuildProjectDirectory)/.local/tModLoader&quot;</ExtraBuildModFlags>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- The offline self-check project is built separately; keep it out of the mod assembly. -->
+    <Compile Remove="tools/**/*.cs" />
+  </ItemGroup>
+
   <Import Project="$(TmlInstallPath)/tMLMod.targets" />
 </Project>

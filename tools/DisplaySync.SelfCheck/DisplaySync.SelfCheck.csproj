@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The smoothing logic is shared with the mod and has no game dependency. -->
+    <Compile Include="..\..\Common\DisplaySync.cs" Link="DisplaySync.cs" />
+  </ItemGroup>
+
+</Project>

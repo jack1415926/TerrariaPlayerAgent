@@ -11,7 +11,7 @@ public sealed class MultiplayerProbeCommand : ModCommand
 {
     public override string Command => "tpamp";
     public override CommandType Type => CommandType.Chat;
-    public override string Usage => "/tpamp spawn | status | team 0-5 | left/right 1-10 | stop | remove";
+    public override string Usage => "/tpamp spawn | status | diag | team 0-5 | left/right 1-10 | stop | remove";
     public override string Description => "Experimental multiplayer player probe.";
 
     public override void Action(CommandCaller caller, string input, string[] args)
@@ -22,6 +22,11 @@ public sealed class MultiplayerProbeCommand : ModCommand
             return;
         }
         string action = args.Length > 0 ? args[0].ToLowerInvariant() : "";
+        if (action == "diag" && args.Length == 1)
+        {
+            ModContent.GetInstance<MultiplayerProbe>().PrintDiagnostics(caller);
+            return;
+        }
         int value = 0;
         bool valid = action is "spawn" or "status" or "stop" or "remove"
             ? args.Length == 1
