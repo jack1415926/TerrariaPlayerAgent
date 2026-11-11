@@ -19,7 +19,7 @@ public struct DisplaySample
     public float X, Y;
     public bool Extrapolated;
     public bool Stale;
-    public bool Snapped;
+    public bool Correcting;
 }
 
 public enum SnapshotResult { Accepted, Duplicate, OutOfOrder }
@@ -48,6 +48,8 @@ public sealed class DisplaySync
     public double StaleAfter = 0.5;
     public float TeleportDistance = 96f;
     public float StopSpeed = 0.05f;
+    // Recovered snapshots can land far from the frozen prediction; move at this speed instead of jumping.
+    public float MaxCorrectionSpeed = 600f;
     public const int CorrectionHistory = 64;
 
     private readonly List<SyncSnapshot> snapshots = new();
@@ -57,8 +59,13 @@ public sealed class DisplaySync
     private float lastSequenceX, lastSequenceY;
     private bool hasDisplay;
     private float displayX, displayY;
+    private bool hasSampleTime;
+    private double lastSampleTime;
+    private bool resyncing;
+    private double lastReceivedAt;
 
     public bool HasSnapshots => snapshots.Count > 0;
+    public int BufferedSnapshots => snapshots.Count;
     public uint LastSequence => lastSequence;
 
     public long ReceivedCount { get; private set; }
@@ -81,11 +88,18 @@ public sealed class DisplaySync
             // A jump this large is a respawn/teleport, not movement: never interpolate across it.
             snapshots.Clear();
             TeleportCount++;
+            resyncing = false;
+        }
+        else if (hasSequence && snapshot.ReceivedAt - lastReceivedAt > StaleAfter)
+        {
+            // Playback resumes after an outage: correct the frozen prediction smoothly, not by jumping.
+            resyncing = true;
         }
 
         lastSequence = snapshot.Sequence;
         lastSequenceX = snapshot.X;
         lastSequenceY = snapshot.Y;
+        lastReceivedAt = snapshot.ReceivedAt;
         hasSequence = true;
         snapshots.Add(snapshot);
         if (snapshots.Count > Capacity) snapshots.RemoveAt(0);
@@ -142,13 +156,43 @@ public sealed class DisplaySync
             y = from.Y + (to.Y - from.Y) * t;
         }
 
-        bool snapped = hasDisplay && Distance(displayX, displayY, x, y) > TeleportDistance;
+        // Normal playback assigns the target directly. Only a post-outage resync eases the display
+        // toward the new authority, so a frozen prediction never snaps backwards in one frame.
+        float targetX = x, targetY = y;
+        bool correcting = false;
+        double elapsed = hasSampleTime ? now - lastSampleTime : 0;
+        if (hasDisplay && resyncing && elapsed > 0)
+        {
+            float distance = Distance(displayX, displayY, targetX, targetY);
+            float step = MaxCorrectionSpeed * (float)Math.Min(elapsed, 0.25);
+            if (distance > step)
+            {
+                float scale = step / distance;
+                displayX += (targetX - displayX) * scale;
+                displayY += (targetY - displayY) * scale;
+                correcting = true;
+            }
+            else
+            {
+                displayX = targetX; displayY = targetY;
+                resyncing = false;
+            }
+        }
+        else
+        {
+            displayX = targetX; displayY = targetY;
+        }
         hasDisplay = true;
-        displayX = x; displayY = y;
+        hasSampleTime = true;
+        lastSampleTime = now;
         if (extrapolated) ExtrapolatedFrames++;
         if (stale) StaleFrames++;
 
-        sample = new DisplaySample { X = x, Y = y, Extrapolated = extrapolated, Stale = stale, Snapped = snapped };
+        sample = new DisplaySample
+        {
+            X = displayX, Y = displayY,
+            Extrapolated = extrapolated, Stale = stale, Correcting = correcting
+        };
         return true;
     }
 
@@ -187,6 +231,10 @@ public sealed class DisplaySync
         lastSequence = 0;
         lastSequenceX = lastSequenceY = 0;
         displayX = displayY = 0;
+        hasSampleTime = false;
+        lastSampleTime = 0;
+        resyncing = false;
+        lastReceivedAt = 0;
         // Counters describe the current mirror instance; a new AI starts from zero.
         ReceivedCount = DuplicateCount = OutOfOrderCount = 0;
         ExtrapolatedFrames = StaleFrames = TeleportCount = CorrectionCount = 0;

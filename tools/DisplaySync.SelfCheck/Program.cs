@@ -23,6 +23,13 @@ internal static class Program
         TeleportResetsPlayback();
         ResetClearsDisplayAndCounters();
         CorrectionHistoryIsBounded();
+        StaleRecoveryBehindPrediction();
+        StaleRecoveryAheadOfPrediction();
+        StaleRecoveryWithReversedVelocity();
+        StaleRecoveryThenStop();
+        RepeatedOutagesStayBounded();
+        BuffersStayBounded();
+        NormalPlaybackIsNotRateLimited();
 
         Console.WriteLine(failures == 0
             ? $"SELF-CHECK OK ({checks} checks)"
@@ -209,6 +216,143 @@ internal static class Program
         Check("max correction tracked", sync.MaxCorrection == DisplaySync.CorrectionHistory + 9);
     }
 
+    private static void StaleRecoveryBehindPrediction()
+    {
+        var (sync, previous, maxStep, corrected) = FreezePrediction();
+        RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
+
+        // The actor actually stopped during the outage, so truth is behind the frozen prediction.
+        sync.Add(Snap(3, 0.8, 10f, vx: 0f));
+        RunFrames(sync, 0.8, 2.3, ref previous, ref maxStep, ref corrected);
+
+        Check("recovery behind is rate limited", corrected);
+        Check("recovery behind never jumps more than one step", maxStep <= 10.01f);
+        Near("recovery behind converges to authority", 10f, previous, 0.5f);
+    }
+
+    private static void StaleRecoveryAheadOfPrediction()
+    {
+        var (sync, previous, maxStep, corrected) = FreezePrediction();
+        RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
+        sync.Add(Snap(3, 0.8, 60f, vx: 3f)); // truth is ahead of the frozen endpoint
+        RunFrames(sync, 0.8, 2.8, ref previous, ref maxStep, ref corrected);
+
+        Check("recovery ahead is rate limited", corrected);
+        Check("recovery ahead never jumps more than one step", maxStep <= 10.01f);
+        Near("recovery ahead converges to the new authority", 87f, previous, 0.5f);
+    }
+
+    private static void StaleRecoveryWithReversedVelocity()
+    {
+        var (sync, previous, maxStep, corrected) = FreezePrediction();
+        RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
+        sync.Add(Snap(3, 0.8, 5f, vx: -3f)); // the actor reversed during the outage
+        RunFrames(sync, 0.8, 2.8, ref previous, ref maxStep, ref corrected);
+
+        Check("reversed recovery is rate limited", corrected);
+        Check("reversed recovery never jumps more than one step", maxStep <= 10.01f);
+        Check("reversed recovery moves backwards smoothly", previous < 0f);
+        Near("reversed recovery converges", -22f, previous, 0.5f);
+    }
+
+    private static void StaleRecoveryThenStop()
+    {
+        var (sync, previous, maxStep, corrected) = FreezePrediction();
+        RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
+        sync.Add(Snap(3, 0.8, 10f, vx: 0f));
+        sync.Add(Snap(4, 0.9, 10f, vx: 0f)); // stops immediately after recovery
+        RunFrames(sync, 0.8, 2.3, ref previous, ref maxStep, ref corrected);
+
+        Near("recovery then stop settles", 10f, previous, 0.5f);
+        float settled = previous;
+        float settleStep = 0f;
+        bool unused = false;
+        RunFrames(sync, 2.3, 2.8, ref previous, ref settleStep, ref unused);
+        Check("recovery then stop does not drift", settleStep <= 0.01f);
+        Near("recovery then stop holds position", settled, previous, 0.01f);
+    }
+
+    private static void RepeatedOutagesStayBounded()
+    {
+        var sync = new DisplaySync();
+        uint sequence = 1;
+        double time = 0;
+        float x = 0f;
+        float previous = 0f;
+        float maxStep = 0f;
+        bool corrected = false;
+        for (int cycle = 0; cycle < 3; cycle++)
+        {
+            sync.Add(Snap(sequence++, time, x, vx: 3f));
+            time += 0.1; x += 18f;
+            sync.Add(Snap(sequence++, time, x, vx: 3f));
+
+            double staleAt = time + 0.8;
+            Check($"cycle {cycle} goes stale", sync.TrySample(staleAt, out DisplaySample stale) && stale.Stale);
+            previous = stale.X;
+            RunFrames(sync, staleAt, staleAt + 0.2, ref previous, ref maxStep, ref corrected);
+
+            time = staleAt + 0.2; x += 10f;
+            sync.Add(Snap(sequence++, time, x, vx: 0f));
+            RunFrames(sync, time, time + 0.7, ref previous, ref maxStep, ref corrected);
+            Near($"cycle {cycle} converges after recovery", x, previous, 0.5f);
+        }
+        Check("repeated outages stay rate limited", maxStep <= 10.01f);
+        Check("buffer stays bounded", sync.BufferedSnapshots <= DisplaySync.Capacity);
+        Check("corrections stay bounded", sync.RecentCorrections.Count <= DisplaySync.CorrectionHistory);
+    }
+
+    private static void BuffersStayBounded()
+    {
+        var sync = new DisplaySync();
+        for (uint i = 1; i <= 40; i++) sync.Add(Snap(i, i * 0.05, i * 2f));
+        Check("snapshot buffer capped", sync.BufferedSnapshots == DisplaySync.Capacity);
+        Check("all snapshots counted", sync.ReceivedCount == 40);
+        for (int i = 0; i < DisplaySync.CorrectionHistory + 20; i++) sync.RecordCorrection(i, i * 0.001);
+        Check("correction history capped", sync.RecentCorrections.Count == DisplaySync.CorrectionHistory);
+    }
+
+    private static void NormalPlaybackIsNotRateLimited()
+    {
+        var sync = new DisplaySync();
+        sync.Add(Snap(1, 0.0, 0f, vx: 3f));
+        sync.Add(Snap(2, 0.1, 18f, vx: 3f));
+        sync.TrySample(0.12, out _);
+
+        // A large target with no outage gap must be assigned directly, not eased for half a second.
+        sync.Add(Snap(3, 0.15, 90f, vx: 3f));
+        Check("normal playback samples", sync.TrySample(0.3, out DisplaySample sample));
+        Check("normal playback is not rate limited", !sample.Correcting);
+        Near("normal playback reaches the target", 95.4f, sample.X, 0.01f);
+    }
+
+    // Two moving snapshots frozen by a long outage; the display ends at the 9-tick prediction.
+    private static (DisplaySync sync, float previous, float maxStep, bool corrected) FreezePrediction()
+    {
+        var sync = new DisplaySync();
+        sync.Add(Snap(1, 0.0, 0f, vx: 3f));
+        sync.Add(Snap(2, 0.1, 10f, vx: 3f));
+        sync.TrySample(0.7, out DisplaySample frozen);
+        Check("freeze is stale", frozen.Stale);
+        Near("freeze sits on the prediction endpoint", 37f, frozen.X, 0.01f);
+        return (sync, frozen.X, 0f, false);
+    }
+
+    private static void RunFrames(DisplaySync sync, double from, double to,
+        ref float previous, ref float maxStep, ref bool corrected)
+    {
+        int frames = (int)Math.Round((to - from) * 60);
+        for (int i = 1; i <= frames; i++)
+            Frame(sync, from + i / 60.0, ref previous, ref maxStep, ref corrected);
+    }
+
+    private static void Frame(DisplaySync sync, double now, ref float previous, ref float maxStep, ref bool corrected)
+    {
+        sync.TrySample(now, out DisplaySample sample);
+        maxStep = MathF.Max(maxStep, MathF.Abs(sample.X - previous));
+        previous = sample.X;
+        if (sample.Correcting) corrected = true;
+    }
     private static void Near(string name, float expected, float actual, float tolerance)
     {
         bool ok = MathF.Abs(expected - actual) <= tolerance;
