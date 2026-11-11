@@ -41,6 +41,8 @@ public sealed class DisplaySync
 {
     // Bounded playback: two snapshot intervals of delay, a short extrapolation, then hold.
     public const int Capacity = 12;
+    // Terraria simulates at 60 ticks per second; Player.velocity is world units per tick.
+    public const double TicksPerSecond = 60.0;
     public double InterpolationDelay = 0.12;
     public double MaxExtrapolation = 0.15;
     public double StaleAfter = 0.5;
@@ -108,22 +110,24 @@ public sealed class DisplaySync
         }
         else if (renderTime >= latest.ReceivedAt)
         {
-            double age = now - latest.ReceivedAt;
+            double silence = now - latest.ReceivedAt;
+            double ahead = renderTime - latest.ReceivedAt;
+            stale = silence > StaleAfter;
             float speed = MathF.Sqrt(latest.VelocityX * latest.VelocityX + latest.VelocityY * latest.VelocityY);
-            if (age > StaleAfter)
+            if (ahead <= 0 || speed < StopSpeed)
             {
-                x = latest.X; y = latest.Y; stale = true;
-            }
-            else if (speed < StopSpeed)
-            {
-                // A stopped actor must settle exactly on the authoritative position, never drift.
+                // A stopped actor settles exactly on authority; a non-positive horizon never predicts.
                 x = latest.X; y = latest.Y;
             }
             else
             {
-                float seconds = (float)Math.Min(age, MaxExtrapolation);
-                x = latest.X + latest.VelocityX * seconds;
-                y = latest.Y + latest.VelocityY * seconds;
+                // velocity is world units per simulation tick, so convert the horizon into ticks.
+                // Beyond MaxExtrapolation the position stays at the same endpoint: going stale must
+                // not snap the display back to the last packet.
+                double seconds = Math.Min(ahead, MaxExtrapolation);
+                float ticks = (float)(seconds * TicksPerSecond);
+                x = latest.X + latest.VelocityX * ticks;
+                y = latest.Y + latest.VelocityY * ticks;
                 extrapolated = true;
             }
         }
@@ -183,6 +187,10 @@ public sealed class DisplaySync
         lastSequence = 0;
         lastSequenceX = lastSequenceY = 0;
         displayX = displayY = 0;
+        // Counters describe the current mirror instance; a new AI starts from zero.
+        ReceivedCount = DuplicateCount = OutOfOrderCount = 0;
+        ExtrapolatedFrames = StaleFrames = TeleportCount = CorrectionCount = 0;
+        LastCorrection = MaxCorrection = 0f;
     }
 
     private static float Distance(float ax, float ay, float bx, float by)
