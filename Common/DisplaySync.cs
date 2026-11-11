@@ -12,6 +12,9 @@ public struct SyncSnapshot
     public float X, Y;
     public float VelocityX, VelocityY;
     public double ReceivedAt;
+    // The server marks a teleport/respawn on its own authoritative timeline; the client never guesses it.
+    public bool Teleported;
+    public bool TeleportKnown;
 }
 
 public struct DisplaySample
@@ -46,7 +49,9 @@ public sealed class DisplaySync
     public double InterpolationDelay = 0.12;
     public double MaxExtrapolation = 0.15;
     public double StaleAfter = 0.5;
-    public float TeleportDistance = 96f;
+    public float TeleportDistance = DefaultTeleportDistance;
+    // Shared with the server, which flags a jump on its fixed 6-tick send cadence.
+    public const float DefaultTeleportDistance = 96f;
     public float StopSpeed = 0.05f;
     // Recovered snapshots can land far from the frozen prediction; move at this speed instead of jumping.
     public float MaxCorrectionSpeed = 600f;
@@ -83,16 +88,18 @@ public sealed class DisplaySync
         if (hasSequence && snapshot.Sequence == lastSequence) { DuplicateCount++; return SnapshotResult.Duplicate; }
         if (hasSequence && snapshot.Sequence < lastSequence) { OutOfOrderCount++; return SnapshotResult.OutOfOrder; }
 
-        if (hasSequence && Distance(lastSequenceX, lastSequenceY, snapshot.X, snapshot.Y) > TeleportDistance)
+        bool outage = hasSequence && snapshot.ReceivedAt - lastReceivedAt > StaleAfter;
+        if (hasSequence && IsTeleport(in snapshot, outage))
         {
-            // A jump this large is a respawn/teleport, not movement: never interpolate across it.
+            // An explicit teleport always resets playback, even when it arrives after an outage.
             snapshots.Clear();
             TeleportCount++;
             resyncing = false;
         }
-        else if (hasSequence && snapshot.ReceivedAt - lastReceivedAt > StaleAfter)
+        else if (outage)
         {
             // Playback resumes after an outage: correct the frozen prediction smoothly, not by jumping.
+            // A large gap here is normal movement during lost packets, not a teleport.
             resyncing = true;
         }
 
@@ -194,6 +201,14 @@ public sealed class DisplaySync
             Extrapolated = extrapolated, Stale = stale, Correcting = correcting
         };
         return true;
+    }
+
+    private bool IsTeleport(in SyncSnapshot snapshot, bool outage)
+    {
+        if (snapshot.TeleportKnown) return snapshot.Teleported;
+        // Without a server marker only a jump that arrives on a normal cadence is trusted;
+        // a big jump after an outage is movement accumulated while packets were lost.
+        return !outage && Distance(lastSequenceX, lastSequenceY, snapshot.X, snapshot.Y) > TeleportDistance;
     }
 
     // Called by the client with the distance it had to move the mirror this frame.

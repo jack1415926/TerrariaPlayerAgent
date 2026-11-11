@@ -19,6 +19,8 @@ public sealed class MultiplayerProbe : ModSystem
     private Player? mirror, previous;
     private readonly DisplaySync display = new();
     private uint stateSequence;
+    private Vector2 lastSentPosition;
+    private bool hasSentPosition;
     private DemoPlayerSystem Demo => ModContent.GetInstance<DemoPlayerSystem>();
     private static double Now => Environment.TickCount64 / 1000.0;
 
@@ -124,6 +126,7 @@ public sealed class MultiplayerProbe : ModSystem
             int direction = reader.ReadSByte(), team = reader.ReadByte(), life = reader.ReadInt32();
             uint sequence = reader.ReadUInt32();
             long serverTick = reader.ReadInt64();
+            byte flags = reader.ReadByte();
             if (slot < 0 || slot >= Main.maxPlayers || slot == Main.myPlayer) return;
             if (mirrorSlot != slot) ClearMirror();
             if (mirror == null)
@@ -141,7 +144,7 @@ public sealed class MultiplayerProbe : ModSystem
             {
                 Sequence = sequence, ServerTick = serverTick,
                 X = position.X, Y = position.Y, VelocityX = velocity.X, VelocityY = velocity.Y,
-                ReceivedAt = Now
+                ReceivedAt = Now, Teleported = (flags & 1) != 0, TeleportKnown = true
             });
             mirror.direction = direction; mirror.team = team;
             mirror.statLife = life; mirror.dead = life <= 0;
@@ -207,12 +210,19 @@ public sealed class MultiplayerProbe : ModSystem
         packet.Write((short)(actor?.whoAmI ?? -1));
         if (actor != null)
         {
+            // The server marks a jump on its fixed 6-tick cadence; normal movement cannot reach 96 px.
+            bool teleported = hasSentPosition &&
+                Vector2.Distance(lastSentPosition, actor.position) > DisplaySync.DefaultTeleportDistance;
+            lastSentPosition = actor.position;
+            hasSentPosition = true;
             packet.Write(actor.position.X); packet.Write(actor.position.Y);
             packet.Write(actor.velocity.X); packet.Write(actor.velocity.Y);
             packet.Write((sbyte)actor.direction); packet.Write((byte)actor.team); packet.Write(actor.statLife);
             packet.Write(stateSequence++);
             packet.Write((long)Main.GameUpdateCount);
+            packet.Write((byte)(teleported ? 1 : 0));
         }
+        else hasSentPosition = false;
         packet.Send();
     }
 
@@ -227,5 +237,5 @@ public sealed class MultiplayerProbe : ModSystem
         mirror = previous = null; mirrorSlot = -1;
     }
 
-    public override void OnWorldUnload() { ClearMirror(); controller = -1; }
+    public override void OnWorldUnload() { ClearMirror(); controller = -1; hasSentPosition = false; }
 }
