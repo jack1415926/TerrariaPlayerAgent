@@ -63,7 +63,15 @@ TOOL = {
 }
 
 
-def validate_actions(arguments):
+MULTIPLAYER_COMMAND = re.compile(r"(?:status|/tpa stop|/tpa (?:left|right)(?: [0-9]+(?:\.[0-9]+)?)?)")
+MULTIPLAYER_TOOL = {"type": "function", "function": {**TOOL["function"], "description":
+    "多人服务器中的短任务工具。仅支持 status、/tpa left [秒数]、/tpa right [秒数]、/tpa stop。"
+    "移动默认2秒，每次大于0且最多3秒；本地处理跨坎与碰撞，宿主逐条等待实际结果。"
+    "只能控制已生成的AI，不控制真人。不支持攻击、装备、挖掘、跟随或其他命令。"
+    "危险或受阻时停止并说明，不把计时结束或模型总结当作目标已达成。"}}
+
+
+def validate_actions(arguments, agent_mode="singleplayer"):
     if not isinstance(arguments, dict) or set(arguments) - {"commands", "wait_seconds"}:
         raise ValueError("Expected commands and optional wait_seconds.")
     commands = arguments.get("commands")
@@ -72,6 +80,11 @@ def validate_actions(arguments):
     for command in commands:
         if not isinstance(command, str) or not COMMAND.fullmatch(command):
             raise ValueError("Unsupported game command.")
+        if agent_mode == "multiplayer_server":
+            if not MULTIPLAYER_COMMAND.fullmatch(command):
+                raise ValueError("Multiplayer supports only status, short left/right movement and stop.")
+            if len(command.split()) == 3 and float(command.split()[2]) > 3:
+                raise ValueError("Multiplayer movement must be > 0 and <= 3 seconds.")
         parts = command.split()
         if len(parts) > 1 and parts[1] == "select" and int(parts[2]) >= 50:
             raise ValueError("Inventory slot must be between 0 and 49.")
@@ -119,6 +132,7 @@ RESUME_TIMEOUT = 15
 TICK_STALL_SECONDS = 2
 IDLE_POLL_SECONDS = 0.2
 HEARTBEAT_SECONDS = 5
+MODEL_REQUEST_SLOT = threading.BoundedSemaphore(1)
 GOAL_TEXT_LIMIT = 500
 
 
@@ -153,17 +167,18 @@ def _active(actor):
     return bool((actor.get("navigation") or {}).get("active"))
 
 
-def game_request(command, expected_revision=None):
+def game_request(command, expected_revision=None, context=None):
     directory = MAILBOX
     if not directory.is_dir():
         raise RuntimeError("Start scripts/play.ps1 and enter the test world first.")
-    pending = directory / ("stop.json" if command == "/tpa stop" else "request.json")
+    pending = directory / ("stop.json" if command == "/tpa stop" and
+                           (context or {}).get("agentMode") != "multiplayer_server" else "request.json")
     if pending.exists():
         raise RuntimeError("Another game request is pending; use only one controller.")
     identity = str(uuid.uuid4())
     temporary = directory / f"{identity}.tmp"
     response = directory / f"response-{identity}.json"
-    temporary.write_text(json.dumps({"id": identity, "command": command,
+    temporary.write_text(json.dumps({**(context or {}), "id": identity, "command": command,
                                     "expectedStopRevision": expected_revision}), encoding="utf-8")
     try:
         # Windows rename refuses to overwrite another controller's pending request.
@@ -187,11 +202,24 @@ def game_request(command, expected_revision=None):
     raise OutcomeUnknown("The game took the request but did not answer; its outcome is unknown.")
 
 
+def mode_request(mode, command="status", expected_revision=None, context=None):
+    if mode == "multiplayer_server":
+        return game_request(command, expected_revision, context={**(context or {}), "agentMode": mode})
+    return game_request(command, expected_revision)
+
+
+def multiplayer_identity(state):
+    return {"worldSession": state.get("worldSession"),
+            "actorGeneration": (state.get("actor") or {}).get("generation"),
+            "controllerToken": state.get("controllerToken"), "goalId": state.get("goalId"),
+            "hostSession": state.get("hostSession")}
+
+
 def observation(result):
     state = result["state"]
     compact = {key: state.get(key) for key in
                ("agentMode", "gameMenu", "netMode", "paused", "focused", "worldSession",
-                "tick", "stopRevision", "player", "actor")}
+                "tick", "stopRevision", "player", "actor", "controllerSlot", "controllerToken", "goalId", "hostSession")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
@@ -208,6 +236,8 @@ class TaskControl:
         self.takeover = False
         self.evidence = None
         self.world_session = state.get("worldSession") or None
+        self.agent_mode = state.get("agentMode") or "singleplayer"
+        self.identity = multiplayer_identity(state) if self.agent_mode == "multiplayer_server" else None
         actor = state.get("actor") or {}
         self.actor_slot = actor.get("slot")
         self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
@@ -221,16 +251,21 @@ class TaskControl:
             self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
 
     def observe(self):
-        self.update(game_request("status"))
+        self.update(self.request("status"))
         if self.state["stopRevision"] != self.revision:
             raise TaskInterrupted("User stopped/removed the AI; old task cancelled.")
-        if self.state["gameMenu"] or self.state["netMode"] != 0:
-            raise TaskInterrupted("The single-player world is no longer running.")
+        if self.state["gameMenu"] or self.state["netMode"] != AGENT_MODES[self.agent_mode]:
+            raise TaskInterrupted("The configured game world is no longer running.")
+        if self.identity is not None and multiplayer_identity(self.state) != self.identity:
+            raise TaskInterrupted("The multiplayer goal, controller or AI identity changed.")
         if self.world_session and self.state.get("worldSession") and self.state["worldSession"] != self.world_session:
             raise TaskInterrupted("The world session changed; this task no longer owns the world.")
         if self.state["paused"]:
             raise GameSuspended("The game is paused; no new command was dispatched.")
         return self.state
+
+    def request(self, command, revision=None):
+        return mode_request(self.agent_mode, command, revision, self.identity)
 
     def resume(self):
         """Wait out a pause or outage, then prove this task still owns the AI."""
@@ -238,14 +273,16 @@ class TaskControl:
         deadline = time.monotonic() + RESUME_TIMEOUT
         while time.monotonic() <= deadline:
             try:
-                state = observation(game_request("status"))
+                state = observation(self.request("status"))
             except (Unreachable, OutcomeUnknown):
                 time.sleep(0.1)
                 continue
             if state["stopRevision"] != self.revision:
                 raise TaskInterrupted("User stopped/removed the AI while the task was suspended.")
-            if state["gameMenu"] or state["netMode"] != 0:
-                raise TaskInterrupted("The single-player world is no longer running.")
+            if state["gameMenu"] or state["netMode"] != AGENT_MODES[self.agent_mode]:
+                raise TaskInterrupted("The configured game world is no longer running.")
+            if self.identity is not None and multiplayer_identity(state) != self.identity:
+                raise TaskInterrupted("The multiplayer goal, controller or AI identity changed during recovery.")
             if self.world_session and state.get("worldSession") and state["worldSession"] != self.world_session:
                 raise TaskInterrupted("The world session changed while the task was suspended.")
             actor = state.get("actor") or {}
@@ -261,7 +298,7 @@ class TaskControl:
                 return state
             if not self.takeover:
                 # A stale input is still running: cancel it before this task stops dispatching.
-                self.update(game_request("/tpa stop", self.revision))
+                self.update(self.request("/tpa stop", self.revision))
                 self.revision = self.state["stopRevision"]
                 self.takeover = True
             time.sleep(0.1)
@@ -320,15 +357,24 @@ class TaskControl:
 
 def chat_interruptibly(messages, control):
     # Only the network call runs in the daemon thread; game requests stay serialized here.
+    slot = MODEL_REQUEST_SLOT
+    while not slot.acquire(timeout=0.2):
+        control.observe()
+    try:
+        control.observe()
+    except BaseException:
+        slot.release()
+        raise
     finished = threading.Event()
     result = {}
 
     def fetch():
         try:
-            result["reply"] = chat(messages, [TOOL])
+            result["reply"] = chat(messages, [MULTIPLAYER_TOOL if control.agent_mode == "multiplayer_server" else TOOL])
         except Exception as exc:
             result["error"] = exc
         finally:
+            slot.release()
             finished.set()
 
     threading.Thread(target=fetch, daemon=True).start()
@@ -362,7 +408,7 @@ def _execute_actions(commands, wait, control, actions):
         before = control.observe()
         entry = {"command": command, "start_tick": before["tick"], "status": "running"}
         actions.append(entry)
-        reply = game_request(command, control.revision)
+        reply = control.request(command, control.revision)
         control.update(reply)
         if command == "/tpa stop":
             control.revision = control.state["stopRevision"]
@@ -485,9 +531,14 @@ def run(args, report, expected=None):
         report.update(outcome="api_connected", model=reply.get("model"), usage=reply.get("usage"))
         print(f"API connected: model={reply.get('model')}, reply={reply['choices'][0]['message'].get('content')}", flush=True)
         return
-    initial = observation(game_request("status"))
-    if initial["gameMenu"] or initial["netMode"] != 0 or initial["paused"]:
-        raise RuntimeError("Enter a running single-player test world and keep it focused.")
+    mode = getattr(args, "agent_mode", "singleplayer")
+    initial = observation(mode_request(mode))
+    if initial["gameMenu"] or initial["netMode"] != AGENT_MODES[mode] or initial["paused"]:
+        raise RuntimeError("Enter a running world matching the Agent mode.")
+    if mode == "multiplayer_server":
+        validate_snapshot(initial, mode)
+        if not expected or any(expected.get(key) != value for key, value in multiplayer_identity(initial).items()):
+            raise TaskInterrupted("The multiplayer goal identity expired before execution.")
     if expected:
         # The host validated this goal a moment ago; a stop or world change since then must win.
         if expected.get("stopRevision") is not None and initial["stopRevision"] != expected["stopRevision"]:
@@ -506,7 +557,8 @@ def run(args, report, expected=None):
     report.update(goal=goal, initial_state=initial, turns=[], outcome="budget_exhausted")
     control = TaskControl(initial)
     messages = [
-        {"role": "system", "content": (ROOT / "agent/prompts/system.md").read_text(encoding="utf-8")},
+        {"role": "system", "content": (ROOT / ("agent/prompts/multiplayer.md" if mode == "multiplayer_server"
+                                                   else "agent/prompts/system.md")).read_text(encoding="utf-8")},
         {"role": "user", "content": goal + "\n初始状态：\n" + json.dumps(initial, ensure_ascii=False)},
     ]
     try:
@@ -529,7 +581,7 @@ def run(args, report, expected=None):
                 try:
                     if call["function"]["name"] != "game_actions":
                         raise ValueError("Unknown tool.")
-                    commands, wait = validate_actions(json.loads(call["function"]["arguments"]))
+                    commands, wait = validate_actions(json.loads(call["function"]["arguments"]), mode)
                 except (ValueError, TypeError) as exc:
                     result = {"ok": False, "error": str(exc)}
                 else:
@@ -563,7 +615,7 @@ def run(args, report, expected=None):
         # Preserve the actor and default respawn; only cancel active input.
         try:
             # Never let an old task's cleanup stop a newer task after a user cancellation.
-            report["final_state"] = observation(game_request("/tpa stop", control.revision))
+            report["final_state"] = observation(control.request("/tpa stop", control.revision))
         except TaskInterrupted as exc:
             report["final_state"] = exc.state or control.state
         except RuntimeError as exc:
@@ -599,7 +651,7 @@ def validate_snapshot(state, agent_mode):
 
 def probe(args, report):
     """Batch 1: read one server snapshot. No goal, no model, no game actions."""
-    state = observation(game_request("status"))
+    state = observation(mode_request(args.agent_mode))
     validate_snapshot(state, args.agent_mode)
     actor = state.get("actor") or {}
     summary = {
@@ -632,8 +684,11 @@ def probe_conflicts(args):
 
 
 def mode_usage_error(args):
-    if args.agent_mode == "multiplayer_server" and not args.probe:
-        return "multiplayer_server requires --probe in batch 1; HostMode stays single-player only."
+    if args.agent_mode == "multiplayer_server" and not (args.probe or getattr(args, "host", False)):
+        return "multiplayer_server requires --probe or --host; goals must come from the controller in-game."
+    if args.agent_mode == "multiplayer_server" and getattr(args, "host", False) and any(
+            getattr(args, key, False) for key in ("goal", "stop", "check_api")):
+        return "Multiplayer HostMode does not accept --goal, --stop or --check-api."
     return None
 
 
@@ -665,12 +720,12 @@ def poll_goal():
 def goal_ack(goal, status, reason=""):
     # One file per status: replacing a file another process has open fails on Windows.
     _write_json(MAILBOX / f"goal-ack-{goal['id']}-{status}.json",
-                {"id": goal["id"], "status": status, "reason": reason})
+                {"id": goal["id"], "status": status, "reason": reason, "agentMode": goal.get("agentMode")})
 
 
 def goal_result(goal, status, summary="", turns=0):
     _write_json(MAILBOX / f"goal-result-{goal['id']}.json",
-                {"id": goal["id"], "status": status, "summary": summary, "turns": turns})
+                {"id": goal["id"], "status": status, "summary": summary, "turns": turns, "agentMode": goal.get("agentMode")})
 
 
 RESULT_STATUS = {"model_finished": "finished", "budget_exhausted": "budget_exhausted",
@@ -691,14 +746,29 @@ def host_tick(args, report, seen):
     if not text or len(text) > GOAL_TEXT_LIMIT:
         goal_ack(goal, "rejected", f"Goal text must be 1-{GOAL_TEXT_LIMIT} characters.")
         return True
+    mode = getattr(args, "agent_mode", "singleplayer")
+    if mode == "multiplayer_server" and goal.get("agentMode") != mode:
+        goal_ack(goal, "rejected", "Goal does not belong to this Agent mode.")
+        return True
     try:
-        current = observation(game_request("status"))
+        current = observation(mode_request(mode))
     except INTERRUPTIONS as exc:
         goal_ack(goal, "rejected", f"The game did not answer: {exc}")
         return True
-    if current["gameMenu"] or current["netMode"] != 0:
-        goal_ack(goal, "rejected", "Enter a running single-player world first.")
+    if current["gameMenu"] or current["netMode"] != AGENT_MODES[mode]:
+        goal_ack(goal, "rejected", "Enter a running world matching the Agent mode.")
         return True
+    if mode == "multiplayer_server":
+        try:
+            validate_snapshot(current, mode)
+        except RuntimeError as exc:
+            goal_ack(goal, "rejected", str(exc))
+            return True
+        identity = multiplayer_identity(current)
+        if (not all(identity.values()) or goal.get("hostSession") != getattr(args, "host_session", None) or
+                any(goal.get(key if key != "goalId" else "id") != value for key, value in identity.items())):
+            goal_ack(goal, "stale", "The controller, host, goal or AI identity changed.")
+            return True
     if current["paused"]:
         goal_ack(goal, "rejected", "The game is paused; resume it and post the goal again.")
         return True
@@ -714,9 +784,11 @@ def host_tick(args, report, seen):
     goal_report = {}
     # Bind the task to the snapshot just checked: a stop after this point must invalidate it.
     expected = {"stopRevision": current["stopRevision"], "worldSession": current.get("worldSession")}
+    if mode == "multiplayer_server":
+        expected.update(multiplayer_identity(current))
     try:
         run(SimpleNamespace(stop=False, check_api=False, goal=text, goal_file="",
-                            max_turns=args.max_turns), goal_report, expected)
+                            max_turns=args.max_turns, agent_mode=mode), goal_report, expected)
     except TaskInterrupted as exc:
         goal_report.update(outcome="interrupted", error=str(exc))
     except Exception as exc:  # one failed goal must not stop the host
@@ -725,16 +797,49 @@ def host_tick(args, report, seen):
     status = RESULT_STATUS.get(outcome, "failed")
     entry.update(outcome=outcome, status=status, error=goal_report.get("error"),
                  turns=len(goal_report.get("turns", [])))
+    if mode == "multiplayer_server":
+        entry.update(initial_state=goal_report.get("initial_state"), final_state=goal_report.get("final_state"),
+                     actions=[{key: action[key] for key in ("command", "status", "deltaX", "start_tick", "end_tick")
+                               if key in action} for turn in goal_report.get("turns", [])
+                              for tool in turn.get("tools", []) for action in tool["result"].get("actions", [])])
     goal_result(goal, status, goal_report.get("summary") or goal_report.get("error", ""), entry["turns"])
     return True
 
 
 def host(args, report, idle_polls=None, max_goals=0):
+    # The OS releases the lock on crash; no stale lock-file removal or PID guessing is needed.
+    with (MAILBOX / "host.lock").open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            lock.seek(0, 2)
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise RuntimeError("Another Agent host already owns this mailbox.") from exc
+        else:
+            import fcntl
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise RuntimeError("Another Agent host already owns this mailbox.") from exc
+        return _host(args, report, idle_polls, max_goals)
+
+
+def _host(args, report, idle_polls=None, max_goals=0):
     """Serve goals from the mailbox until max_goals is reached or the host idles out."""
     report.update(mode="host", goals=[], outcome="host_stopped")
     started = time.time()
-    beat = {"pid": os.getpid(), "started": started, "beat": started}
+    args.host_session = uuid.uuid4().hex
+    beat = {"pid": os.getpid(), "started": started, "beat": started,
+            "agentMode": getattr(args, "agent_mode", "singleplayer"), "hostSession": args.host_session}
     ready = MAILBOX / "host-ready.json"
+    stale = poll_goal()
+    if stale:
+        goal_ack(stale, "stale", "Host restarted; a leftover goal is never replayed.")
     _write_json(ready, beat)
     stopping = threading.Event()
 
@@ -750,15 +855,6 @@ def host(args, report, idle_polls=None, max_goals=0):
     beat_thread = threading.Thread(target=keep_alive, daemon=True)
     beat_thread.start()
     try:
-        pending = MAILBOX / "goal.json"
-        try:
-            leftover = pending.stat().st_mtime < started
-        except OSError:
-            leftover = False
-        if leftover:
-            stale = poll_goal()
-            if stale:
-                goal_ack(stale, "stale", "Host restarted; a leftover goal is never replayed.")
         seen = set()
         idle = 0
         while True:

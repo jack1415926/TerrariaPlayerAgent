@@ -475,7 +475,7 @@ public sealed class DemoUpdateProbe : ModPlayer
     public override void PostUpdate()
     {
         // Player.Update's local-only interaction block skips this for extra slots.
-        if (IsActor && Player.whoAmI != Main.myPlayer && !Player.dead)
+        if (NativeCombat.IsAuthoritativeActor(Player) && Player.whoAmI != Main.myPlayer && !Player.dead)
             Player.Update_NPCCollision();
     }
 
@@ -486,11 +486,11 @@ public sealed class DemoUpdateProbe : ModPlayer
 
     public override void OnHurt(Player.HurtInfo info)
     {
-        if (IsActor) System.RecordHurt(info);
+        if (NativeCombat.IsAuthoritativeActor(Player)) System.RecordHurt(info);
     }
 
     public override void Kill(double damage, int hitDirection, bool pvp, PlayerDeathReason damageSource)
     {
-        if (IsActor) System.RecordDeath(damageSource);
+        if (NativeCombat.IsAuthoritativeActor(Player)) System.RecordDeath(damageSource);
     }
 }

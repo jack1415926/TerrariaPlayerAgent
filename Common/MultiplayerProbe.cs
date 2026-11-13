@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
@@ -14,13 +15,22 @@ namespace TerrariaPlayerAgent.Common;
 // Disposable test-world probe. This is not a network-connected vanilla client.
 public sealed class MultiplayerProbe : ModSystem
 {
-    private const byte RequestKind = 1, StateKind = 2, ReplyKind = 3;
+    private const byte RequestKind = 1, StateKind = 2, ReplyKind = 3, GoalKind = 4;
     private int controller = -1, mirrorSlot = -1;
+    private Player? controllerPlayer;
+    private object? controllerSocket;
+    private string? controllerToken;
+    internal bool ControllerValid => controller >= 0 && controller < Main.maxPlayers &&
+        controllerSocket != null && Main.player[controller].active && ReferenceEquals(Main.player[controller], controllerPlayer) &&
+        Netplay.Clients[controller].State != 0 && ReferenceEquals(Netplay.Clients[controller].Socket, controllerSocket);
+    internal int ControllerSlot => ControllerValid ? controller : -1;
+    internal string? ControllerToken => ControllerValid ? controllerToken : null;
     private Player? mirror, previous;
     private readonly DisplaySync display = new();
     private uint stateSequence;
     private Vector2 lastSentPosition;
     private bool hasSentPosition;
+    private int combatDiagnosticTicks;
     private DemoPlayerSystem Demo => ModContent.GetInstance<DemoPlayerSystem>();
     private static double Now => Environment.TickCount64 / 1000.0;
 
@@ -78,9 +88,33 @@ public sealed class MultiplayerProbe : ModSystem
         packet.Send();
     }
 
+    internal void RequestGoal(string text)
+    {
+        var packet = Mod.GetPacket(); packet.Write(GoalKind); packet.Write(text); packet.Send();
+    }
+
+    internal void NotifyController(string text)
+    {
+        if (ControllerValid) SendReply(controller, text);
+    }
+
+    private void SendReply(int recipient, string text)
+    {
+        var packet = Mod.GetPacket(); packet.Write(ReplyKind); packet.Write(text); packet.Send(recipient);
+    }
+
     internal void Receive(BinaryReader reader, int sender)
     {
         byte kind = reader.ReadByte();
+        if (Main.netMode == NetmodeID.Server && kind == GoalKind)
+        {
+            string text = reader.ReadString();
+            if (sender < 0 || sender >= Main.maxPlayers || !Main.player[sender].active) return;
+            bool accepted = ModContent.GetInstance<MultiplayerAgentBridge>().QueueGoal(sender, text, out string message);
+            Mod.Logger.Info($"[TPA-MP] goal sender={sender}, accepted={accepted}, reply={message}");
+            SendReply(sender, message);
+            return;
+        }
         if (Main.netMode == NetmodeID.Server && kind == RequestKind)
         {
             string action = reader.ReadString();
@@ -90,32 +124,49 @@ public sealed class MultiplayerProbe : ModSystem
             string reply;
             if (action == "status")
                 reply = Demo.Status(Main.player[sender]);
-            else if (controller >= 0 && controller != sender)
+            else if (controller >= 0 && (!ControllerValid || controller != sender))
                 reply = "Only the player who spawned this probe can control it.";
             else if (action == "spawn")
             {
                 reply = Demo.Spawn(Main.player[sender]);
-                if (Demo.Actor != null) controller = sender;
+                if (Demo.Actor != null && controller < 0)
+                {
+                    controller = sender; controllerPlayer = Main.player[sender];
+                    controllerSocket = Netplay.Clients[sender].Socket;
+                    controllerToken = Guid.NewGuid().ToString("N");
+                }
             }
             else if (action == "remove")
             {
+                ModContent.GetInstance<MultiplayerAgentBridge>().CancelGoal();
                 Demo.Remove(); controller = -1; reply = "Probe removed.";
             }
             else if (Demo.Actor == null) reply = "Use /tpamp spawn first.";
-            else if (action == "stop") { Demo.RequestStop(); reply = "Probe stopped."; }
+            else if (action == "combat")
+            {
+                combatDiagnosticTicks = 1200;
+                reply = "Combat diagnostics enabled for 20s; repeat your position-switching test, then query status.";
+            }
+            else if (action == "stop")
+            {
+                ModContent.GetInstance<MultiplayerAgentBridge>().StopGoal();
+                reply = "Probe stopped; goal cancelled.";
+            }
             else if (action == "team" && value is >= 0 and <= 5)
             {
                 Demo.Actor.team = value; reply = $"Probe team={value}.";
             }
             else if ((action is "left" or "right") && value is >= 1 and <= 10)
             {
+                ModContent.GetInstance<MultiplayerAgentBridge>().CancelGoal();
+                Demo.RequestStop();
                 Demo.Move(action == "left" ? -1 : 1, value * 60);
                 reply = $"Probe moving {action} for {value}s.";
             }
             else reply = "Invalid probe command.";
             SendState();
             Mod.Logger.Info($"[TPA-MP] reply sender={sender}, result={reply}");
-            var response = Mod.GetPacket(); response.Write(ReplyKind); response.Write(reply); response.Send(sender);
+            SendReply(sender, reply);
         }
         else if (Main.netMode == NetmodeID.MultiplayerClient && kind == StateKind)
         {
@@ -157,9 +208,10 @@ public sealed class MultiplayerProbe : ModSystem
     {
         if (Main.netMode != NetmodeID.Server || controller < 0) return;
         // Yield if a real connection claims the unreserved slot. Never kick a client.
-        if (!Main.player[controller].active || Demo.Actor != null &&
+        if (!ControllerValid || Demo.Actor != null &&
             Netplay.Clients[Demo.Actor.whoAmI].State != 0)
         {
+            ModContent.GetInstance<MultiplayerAgentBridge>().CancelGoal();
             Demo.Remove(); controller = -1; SendState();
         }
     }
@@ -172,6 +224,21 @@ public sealed class MultiplayerProbe : ModSystem
             return;
         }
         ApplyDisplay();
+    }
+
+    public override void PostUpdateNPCs()
+    {
+        if (Main.netMode != NetmodeID.Server || combatDiagnosticTicks <= 0) return;
+        combatDiagnosticTicks--;
+        if (Demo.Actor is not { } actor) { combatDiagnosticTicks = 0; return; }
+        if (combatDiagnosticTicks % 30 != 0) return;
+        string enemies = string.Join("; ", Main.npc.Where(n => n.active && !n.friendly && n.damage > 0 &&
+                Vector2.DistanceSquared(n.Center, actor.Center) < 800 * 800).Take(8)
+            .Select(n => $"npc={n.whoAmI}/type={n.type},target={n.target},distance={Vector2.Distance(n.Center, actor.Center):F0}," +
+                $"touching={n.Hitbox.Intersects(actor.Hitbox)},noAggro={actor.npcTypeNoAggro[n.type]}"));
+        Mod.Logger.Info($"[TPA-Combat] slot={actor.whoAmI},active={actor.active},dead={actor.dead},ghost={actor.ghost}," +
+            $"life={actor.statLife},immune={actor.immune}/{actor.immuneTime},god={actor.creativeGodMode},aggro={actor.aggro}," +
+            $"position={actor.position}; {enemies}");
     }
 
     // Called after native player updates, before drawing: the mirror is positioned for this frame.
@@ -237,5 +304,9 @@ public sealed class MultiplayerProbe : ModSystem
         mirror = previous = null; mirrorSlot = -1;
     }
 
-    public override void OnWorldUnload() { ClearMirror(); controller = -1; hasSentPosition = false; }
+    public override void OnWorldUnload()
+    {
+        ClearMirror(); controller = -1; controllerPlayer = null; controllerSocket = null; controllerToken = null;
+        hasSentPosition = false; combatDiagnosticTicks = 0;
+    }
 }

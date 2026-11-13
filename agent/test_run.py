@@ -616,7 +616,7 @@ class HostTests(unittest.TestCase):
 
     def test_host_loop_serves_goal_then_returns_to_idle(self):
         report = {}
-        pending = [{'id': 'g1', 'text': 'Walk right'}]
+        pending = [None, {'id': 'g1', 'text': 'Walk right'}]  # posted only after host readiness
         reply = {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
         with patch.object(agent, 'poll_goal', side_effect=lambda: pending.pop(0) if pending else None), \
                 patch.object(agent, 'chat', side_effect=lambda *a, **k: reply):
@@ -727,7 +727,7 @@ class HostTests(unittest.TestCase):
             beats.append(self.read_ready()['beat'])
             return reply
 
-        pending = [{'id': 'g1', 'text': 'Walk right'}]
+        pending = [None, {'id': 'g1', 'text': 'Walk right'}]  # posted only after host readiness
         with patch.object(agent, 'poll_goal', side_effect=lambda: pending.pop(0) if pending else None), \
                 patch.object(agent, 'HEARTBEAT_SECONDS', 0.02), \
                 patch.object(agent, 'chat', side_effect=chat):
@@ -839,8 +839,9 @@ class AgentModeTests(unittest.TestCase):
     def test_probe_sends_only_status_and_never_reads_goals(self):
         calls = []
 
-        def request(command, expected_revision=None):
+        def request(command, expected_revision=None, context=None):
             calls.append(command)
+            self.assertEqual(context["agentMode"], "multiplayer_server")
             return {"ok": True, "accepted": True, "reply": "Snapshot", "state": server_state()}
 
         report = {}
@@ -872,6 +873,163 @@ class AgentModeTests(unittest.TestCase):
 
     def test_mailbox_path_is_absolute(self):
         self.assertTrue(agent.MAILBOX.is_absolute())
+
+
+class MultiplayerHostTests(unittest.TestCase):
+    wait_for = HostTests.wait_for
+
+    def setUp(self):
+        HostTests.setUp(self)
+        self.requests.stop()
+        self.game.state.update(agentMode='multiplayer_server', netMode=2, player=None,
+                               controllerToken='connection-1', hostSession='host-1', goalId='g1')
+        self.game.state['actor'].update(generation=1, active=True)
+        self.args.agent_mode = 'multiplayer_server'
+        self.args.host_session = 'host-1'
+        self.requests = patch.object(agent, 'game_request', self.request)
+        self.requests.start()
+        self.addCleanup(self.requests.stop)
+        self.sent = []
+
+    def request(self, command, expected_revision=None, context=None):
+        self.assertEqual(context['agentMode'], 'multiplayer_server')
+        self.sent.append((command, copy.deepcopy(context)))
+        if command != 'status':
+            if context != {**agent.multiplayer_identity(self.game.state), 'agentMode': 'multiplayer_server'}:
+                raise agent.TaskInterrupted('expired ownership')
+        revision = self.game.state['stopRevision']
+        result = self.game.request(command, expected_revision)
+        if command == '/tpa stop':  # agent cleanup stops input without cancelling its own goal
+            self.game.state['stopRevision'] = revision
+            result['state']['stopRevision'] = revision
+        return result
+
+    def post_goal(self, **overrides):
+        goal = dict(id='g1', text='向右走一秒然后停止', agentMode='multiplayer_server', stopRevision=0,
+                    worldSession='world-1', actorGeneration=1, controllerToken='connection-1', hostSession='host-1')
+        goal.update(overrides)
+        agent._write_json(self.mailbox / 'goal.json', goal)
+
+    def test_multiplayer_goal_executes_with_bound_identity(self):
+        replies = [
+            {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'c', 'function': {'name': 'game_actions', 'arguments':
+                    json.dumps({'commands': ['/tpa right 1'], 'wait_seconds': 0})}}]}}]},
+            {'choices': [{'message': {'role': 'assistant', 'content': '已停止'}}]},
+        ]
+        report = {}
+        self.post_goal()
+        with patch.object(agent, 'chat', side_effect=replies), patch.object(agent.time, 'sleep'):
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'finished')
+        self.assertEqual(report['goals'][0]['actions'][0]['status'], 'completed')
+        self.assertGreater(report['goals'][0]['actions'][0]['deltaX'], 0)
+        self.assertEqual(self.wait_for('goal-result-g1.json')['agentMode'], 'multiplayer_server')
+
+    def test_stale_controller_generation_host_and_world_do_not_call_model(self):
+        for change in ({'controllerToken': 'old'}, {'actorGeneration': 0}, {'hostSession': 'old'},
+                       {'worldSession': 'old'}, {'stopRevision': -1}, {'id': 'old'}):
+            with self.subTest(change=change), patch.object(agent, 'chat', side_effect=AssertionError('stale goal ran')):
+                self.post_goal(**change)
+                report = {}
+                agent.host_tick(self.args, report, set())
+                self.assertEqual(report['goals'], [])
+
+    def test_identity_change_while_waiting_for_model_discards_response(self):
+        self.post_goal()
+        def chat(*args):
+            self.game.state['controllerToken'] = 'connection-2'
+            return {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'c', 'function': {'name': 'game_actions', 'arguments':
+                    json.dumps({'commands': ['/tpa right 1']})}}]}}]}
+        report = {}
+        with patch.object(agent, 'chat', side_effect=chat):
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(report['goals'][0]['status'], 'interrupted')
+        self.assertNotIn('/tpa right 1', [c for c, _ in self.sent])
+
+    def test_replacement_old_cleanup_keeps_old_identity(self):
+        control = agent.TaskControl(copy.deepcopy(self.game.state))
+        self.game.state.update(goalId='g2', stopRevision=1)
+        with self.assertRaises(agent.TaskInterrupted):
+            control.observe()
+        with self.assertRaises(agent.TaskInterrupted):
+            control.request('/tpa stop', control.revision)
+        self.assertEqual(self.game.state['goalId'], 'g2')
+        self.assertEqual(self.sent[-1][1]['goalId'], 'g1')
+
+    def test_ai_rebuild_and_host_restart_interrupt_active_task(self):
+        for key in ('actorGeneration', 'hostSession'):
+            state = copy.deepcopy(self.game.state)
+            control = agent.TaskControl(state)
+            if key == 'actorGeneration':
+                self.game.state['actor']['generation'] += 1
+            else:
+                self.game.state['hostSession'] = 'new-host'
+            with self.assertRaises(agent.TaskInterrupted):
+                control.observe()
+            self.game.state = state
+
+    def test_multiplayer_whitelist_blocks_non_movement_and_long_actions(self):
+        for command in ('/tpa spawn', '/tpa equip wood', '/tpa attack right 1', '/tpa mine 1 2',
+                        '/tpa goto 100', '/tpa right 4', '/tpa right 0'):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                agent.validate_actions({'commands': [command]}, 'multiplayer_server')
+        self.assertEqual(agent.validate_actions({'commands': ['/tpa left 0.5', '/tpa stop']},
+                                               'multiplayer_server')[0], ['/tpa left 0.5', '/tpa stop'])
+
+    def test_multiplayer_host_mode_requires_in_game_goals(self):
+        args = SimpleNamespace(agent_mode='multiplayer_server', probe=False, host=True)
+        self.assertIsNone(agent.mode_usage_error(args))
+        args.goal = 'bypass controller'
+        self.assertIsNotNone(agent.mode_usage_error(args))
+
+
+class HostOwnershipTests(unittest.TestCase):
+    wait_for = HostTests.wait_for
+    setUp = HostTests.setUp
+    post = HostTests.post
+
+    def test_leftover_with_a_future_timestamp_is_still_discarded_before_ready(self):
+        self.post('old')
+        future = time.time() + 30
+        os.utime(self.mailbox / 'goal.json', (future, future))
+        with patch.object(agent, 'chat', side_effect=AssertionError('leftover replayed')):
+            agent.host(self.args, {}, idle_polls=1)
+        self.assertEqual(self.wait_for('goal-ack-old-stale.json')['status'], 'stale')
+
+    def test_second_host_cannot_overwrite_the_heartbeat(self):
+        def tick(*args):
+            heartbeat = (self.mailbox / 'host-ready.json').read_bytes()
+            with self.assertRaisesRegex(RuntimeError, 'already owns'):
+                agent.host(self.args, {}, idle_polls=1)
+            self.assertEqual((self.mailbox / 'host-ready.json').read_bytes(), heartbeat)
+            return False
+        with patch.object(agent, 'host_tick', side_effect=tick):
+            agent.host(self.args, {}, idle_polls=1)
+
+    def test_late_model_request_keeps_the_single_slot_until_it_finishes(self):
+        entered, release, done = threading.Event(), threading.Event(), threading.Event()
+        slot = threading.BoundedSemaphore(1)
+        class Control:
+            agent_mode = 'multiplayer_server'
+            def observe(self):
+                if entered.is_set():
+                    raise agent.TaskInterrupted('new goal')
+        def chat(*args):
+            entered.set()
+            release.wait(2)
+            done.set()
+            return {}
+        try:
+            with patch.object(agent, 'MODEL_REQUEST_SLOT', slot), patch.object(agent, 'chat', side_effect=chat):
+                with self.assertRaises(agent.TaskInterrupted):
+                    agent.chat_interruptibly([], Control())
+                self.assertFalse(slot.acquire(blocking=False))
+                release.set()
+                self.assertTrue(done.wait(1))
+        finally:
+            release.set()
 
 
 if __name__ == '__main__':

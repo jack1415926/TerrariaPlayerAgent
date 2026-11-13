@@ -144,6 +144,8 @@ public sealed class LocalTestBridge : ModSystem
         {
             using var document = JsonDocument.Parse(File.ReadAllText(file));
             JsonElement root = document.RootElement;
+            if (root.TryGetProperty("agentMode", out var mode) &&
+                mode.ValueKind == JsonValueKind.String && mode.GetString() == MultiplayerAgentBridge.ServerAgentMode) return;
             string Status(string name) =>
                 root.TryGetProperty(name, out JsonElement value) ? value.GetString() ?? "" : "";
             string id = Status("id");
@@ -205,6 +207,8 @@ public sealed class LocalTestBridge : ModSystem
         {
             var request = JsonSerializer.Deserialize<Request>(File.ReadAllText(path))
                 ?? throw new InvalidDataException("Empty request.");
+            // A multiplayer host may outlive the server while this client is at the main menu.
+            if (request.agentMode == MultiplayerAgentBridge.ServerAgentMode) return;
             File.Delete(path);
             id = request.id;
             if (!Guid.TryParse(id, out _) || request.command.Length > 700)
@@ -309,7 +313,7 @@ public sealed class LocalTestBridge : ModSystem
         File.Move(temporary, Path.Combine(directory, $"response-{id}.json"), true);
     }
 
-    private sealed record Request(string id, string command, long? expectedStopRevision = null);
+    private sealed record Request(string id, string command, long? expectedStopRevision = null, string? agentMode = null);
 
     private sealed class TestCaller(Player player) : CommandCaller
     {
