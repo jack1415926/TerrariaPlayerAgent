@@ -1,16 +1,31 @@
 # 当前技术设计与实现
 
-更新：2026-11-10。本文描述工作区实现；最新验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
+更新：2026-11-13。本文描述当前职责；验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
 
-## 多人最小探针
+多人已接入服务器权威接触伤害／死亡／软核重生，以及常驻 Python 宿主的中文短目标。生成者通过 `/tpamp goal` 下单，服务器经文件邮箱交给宿主，宿主仅能下发受目标身份约束的左右短移动和停止；反馈经 ModPacket 回到该真人客户端。动作同时匹配世界、AI generation、连接 token、宿主 session、目标 id 和停止版本。客户端镜像只负责显示。原生主动攻击／挖掘适配仍限单人，不能据此开放多人命令。
+
+```mermaid
+flowchart LR
+    U[真人客户端] -->|目标命令| B[C# 服务器桥]
+    B <-->|JSON 邮箱| P[Python 手写任务循环]
+    P <-->|HTTPS| L[模型 API]
+    B -->|校验后施加输入| A[服务器 AI Player]
+    A <--> G[原生物理与伤害]
+    A -->|状态快照| V[客户端镜像与平滑]
+    B -->|接单与结果反馈| U
+```
+
+`MultiplayerAgentBridge` 负责多人目标邮箱、身份校验、动作白名单及结果过滤；`MultiplayerProbe` 负责真人控制归属、连接对象校验和网络回显；`MultiplayerGoalAcceptance` 仅在显式开发模式下自动驱动替换／停止验收，不参与普通游戏决策。Python 仍复用同一个手写 loop，以模式选择观察、提示词和工具白名单；OS 文件锁保证单邮箱单宿主，单个在途模型请求避免快速替换时积累线程。详见 [多人探针](multiplayer-probe.md)。
+
+## 多人角色与显示
 
 `Commands/MultiplayerProbeCommand.cs` 提供独立 `/tpamp` 命令，经 Mod.HandlePacket 转交 `Common/MultiplayerProbe.cs`。服务器执行生成、限时移动、队伍和清理，每 6 tick 向客户端发送位置／速度／方向／队伍／生命；客户端创建显示镜像。服务器对虚拟槽位跳过无连接清理分支，不暂时切换 active；发往该空连接槽位的原生聊天消息被过滤。IL 分支按运行时 ILLabel 处理，模式变化则拒绝加载，需检查新 tML 版本。
 
-本轮只通过一名真人＋一个 AI 的生成、更新、移动／跳跃、停止、红队显示和清理。它不是实际网络客户端连接；控制归属、离线及槽位冲突保护仍待进一步验证，视觉卡顿已列待办。`/tpa`、JSON、战斗和挖掘适配仍限单人。下一批先做移动同步诊断与平滑的离线工作，第二真人相关验收延后。命令与证据见 [多人探针](multiplayer-probe.md)。下文的原生战斗／挖掘与宿主机制为单人基线。
+当前一名真人场景已通过基础角色、平滑、清理、接触受伤／死亡／重生及中文短目标；AI不是实际网络客户端。第二真人、存活服务器断线和占槽冲突仍待验证。`/tpa` 命令入口仍限单人；JSON 邮箱按模式分工，并非全部只支持单人。命令与证据见 [多人探针](multiplayer-probe.md)。
 
 ## 基座与职责
 
-C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Python标准库Agent负责HTTPS模型请求与任务循环。SDK由global.json固定，本地配置为`.local/tModLoader`。无第三方伙伴模组、数据库、寻路或Agent框架依赖。
+C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Python标准库Agent负责HTTPS模型请求与任务循环。global.json 指定兼容的.NET 8 SDK选择规则，本地配置为`.local/tModLoader`。不依赖第三方伙伴模组、数据库、完整寻路或Agent框架；Cheat Sheet／HERO's Mod 是默认测试辅助。
 
 | 文件 | 当前职责 |
 | --- | --- |
@@ -21,6 +36,9 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Common/NativeCombat.cs | 起手／近战／致死归属检查的有限适配，以及软核自动重生 |
 | Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱；stop／remove清掉待发目标 |
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
+| Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像和有界平滑；不复制怪物选敌逻辑 |
+| Common/MultiplayerAgentBridge.cs | 显式只读／动作开关、目标收发、身份校验、短移动白名单、回执过滤 |
+| Common/MultiplayerGoalAcceptance.cs、agent/acceptance.py | 有界开发验收：真实接单后替换、移动开始后停止、观察60tick；不参与普通决策 |
 | Common/WorldSession.cs | 世界会话标识；进世界生成、退出清空，恢复对账据此拒绝跨世界恢复 |
 | Common/NativeChatInput.cs、EnterDiagnostics.cs | 开发输入诊断及固定聊天探针，不是任意文本输入工具 |
 | agent/run.py、agent/prompts/ | 模型工具白名单、顺序等待、实际结果判定、取消、有限预算、报告与能力／目标提示；常驻宿主的心跳线程与目标身份绑定 |
@@ -36,7 +54,7 @@ PreUpdatePlayers先清除旧输入，再施加本次移动、跳跃、向下或�
 
 stop取消主动输入，不强制速度归零或冻结动画。remove／退出世界恢复仍由AI占据的槽位，清除范围和角色；不持久化AI。死亡清旧动作，软核AI原生倒计时到零后，有限补调FindSpawn、CheckSpawn、Spawn(ReviveFromDeath)，保留同一对象和背包；remove取消该对象的重生资格。
 
-## 目标移动与边界
+## 单人目标移动与边界
 
 GroundNavigation只管水平世界像素X（actor.x），不接收方块列号。goto／home默认最多10秒，误差8像素内、落地且低速才arrived。依据当前水平速度与runSlowdown提前释放输入，利用原生摩擦减速；受阻、超时、取消与到达分开，本次sequence防止旧结果被误用。
 
@@ -46,7 +64,7 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## 原生物品与结果
 
-战斗复用原生使用、命中和伤害，有限适配针对本机tML 2026.08.3.0；Actor的原生本地交互段被跳过，因此DemoUpdateProbe为其补调一次Update_NPCCollision。没有复制伤害公式、命中框或直接扣血。
+主动攻击的起手／近战归属适配仍限单人和已支持物品。接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 
@@ -54,16 +72,16 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## Agent与开发入口
 
-Python通过request.json及唯一response-id.json与游戏线程交换；stop.json独立优先处理。stopRevision变化取消旧任务，后续动作带expectedStopRevision，过期时不执行；旧任务清理也不能覆盖新任务。
+Python通过request.json及唯一response-id.json与游戏线程交换。单人 stop.json 独立优先处理；多人动作和带目标身份的停止走 request.json，真人 `/tpamp stop` 直接在服务器取消。stopRevision变化取消旧任务，旧收尾也不能覆盖新任务。多人请求标 agentMode，主菜单的单人桥不消费。
 
 API请求在网络线程运行，游戏请求由宿主串行处理。等待API时仍检查取消；迟到响应不继续动作，但不承诺服务端请求被取消或不计费。工具仅开放受限命令，不接受任意shell或代码。
 
 game_actions逐条等输入／当前动画结束，再下发后续动作，按tick而非仅墙钟等待。被拒／受阻等情况停止本批后续动作；goto／home和挖掘各核对本次实际证据。自定义自然语言目标没有通用全游戏自动验收器；model_finished仅表示模型正常结束，任务目标仍需事实核对。
 
-游戏失焦时本机入口／世界停止响应。宿主区分明确暂停、tick冻结、请求未执行、结果未知与主动取消；挂起后轮询status，核对stopRevision、世界、AI身份及仍在执行的动作，仍在执行时先发stop接管再结束，不重放原命令；未获stop确认则保留stop_error。后台持续模拟仍未实现，恢复对账只做了离线检查，未实机验证。
+单人历史实测失焦时入口／世界可能停止响应；不能直接套到多人服务器。宿主区分暂停、tick冻结、请求未执行、结果未知与取消，恢复先对账、不盲目重放；未获stop确认保留stop_error。完整失焦恢复仍待实机，短目标成功不代表长期后台游玩已支持。
 
 ## 观察与边界
 
 观察包括AI／真人位置、生命、输入、工具、库存、导航、局部地形／矿物候选、附近480像素最近8个敌怪和有界事件。敌怪位置会过时、slot可能复用，列表不覆盖所有弹幕；候选canKill=true也不保证工具强度足够。
 
-单人基线仍为一个AI、有限轮次任务原型；多人仅覆盖上方最小探针，不是完整玩法同步。没有完整寻路、持续跟随／守位、可靠拾取、合成或持久化。反编译调查只留被忽略的.local/research，不提交游戏源码／二进制；本项目新增代码使用MIT。
+当前一真人＋一个AI，单活动短目标，尚非完整玩法同步。正常初始装备、多人主动攻击、可靠拾取、完整寻路、跟随／守位、合成和持久化仍未交付。反编译调查只留被忽略的.local/research，不提交游戏源码／二进制；本项目新增代码使用MIT。

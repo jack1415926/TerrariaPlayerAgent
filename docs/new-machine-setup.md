@@ -12,7 +12,7 @@
 - Steam、合法安装的Terraria和tModLoader；启动游戏时Steam须运行且已登录。
 - 实机测试辅助：在tModLoader中安装或订阅 Cheat Sheet 和 HERO's Mod；`play.ps1`会将两者加入独立测试配置的启用列表。它们不随本仓库分发。
 
-当前游戏机制和IL适配的验收版本为 **Terraria 1.4.4.9／tModLoader 2026.08.3.0**。优先在新机准备相同版本，可保留旧机安装文件作个人迁移，游戏文件不要提交仓库。若Steam安装了更新版本，需要先按新版本检查原生归属钩子；不能保证旧版本适配在新游戏版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题。
+最近本机实机环境（2026-11-13）为 **Terraria 1.4.4.9／tModLoader 2026.9.3.1、.NET SDK 8.0.428**；下文2026.08.3.0 release zip是历史离线构建示例，不是当前多人实机版本声明。新机按实际版本检查原生归属钩子，不保证其他版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题；游戏文件不提交仓库。
 
 ## 2. 克隆并构建
 
@@ -55,7 +55,9 @@ $env:APPDATA         = "$PWD\.local\appdata"
 
 首次启动在项目的`.local/tModLoader`中创建专用本地角色和普通小世界。不要选择Steam云列表里的正式存档。旧机的`t`／“放松苔原”没有上传，新机不需要同名或相同种子才能继续开发。
 
-进入世界后逐条输入：
+当前多人路线用 `play.ps1 -MultiplayerAgent -TmlPath '<本机安装目录>'` 启动，再由用户“开服并游玩”。启动默认加载 Cheat Sheet／HERO's Mod；先按本轮目的准备环境并记录实际开关，不为测试改成仅加载项目模组。多人只需 `/tpamp spawn`，不发测试装备，普通初始装备仍待开发。
+
+以下为单人历史探索所需的开发物资准备，不能用于证明正常成长；单人进入世界后逐条输入：
 
 ```text
 /tpa spawn
@@ -79,7 +81,15 @@ notepad .env
 
 在本机`.env`填写`TPA_API_KEY`；其余TPA_变量按模板和实际服务配置。密钥通过可信方式私下准备，不能通过公开Git仓库转移。`.env`已被忽略，不要强制加入Git。
 
-保持游戏在前台，运行：
+多人短目标运行方式（每目标最多3轮、宿主4目标后退出）：
+
+```powershell
+.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4
+```
+
+生成者在游戏输入 `/tpamp goal <中文目标>`，用 `/tpamp stop` 取消。只读模式用 `play.ps1 -MultiplayerBridge` 和 `run-agent.ps1 -Probe -AgentMode multiplayer_server`。自动替换／停止验收须宿主剩余至少2目标额度、AI已生成且无活动目标，再运行 `scripts/test-multiplayer-goals.ps1`。不要把两个模式的停止命令或发物资入口混用。
+
+以下是单人历史探索入口，保持游戏前台运行：
 
 ```powershell
 .\scripts\run-agent.ps1 -GoalFile agent/prompts/explore.md -MaxTurns 12
@@ -89,7 +99,7 @@ notepad .env
 
 ## 5. 继续开发时的入口
 
-先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；最新已通过能力和边界见docs/acceptance-checklist.md与docs/multiplayer-probe.md。当前先做好一名真人＋AI，下一批在离线机器做移动同步诊断与平滑；第二真人验收延后。P0/P1/P2 的离线宿主实现保留，剩余游戏验收及多人迁移不能视为已完成。
+先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；当前多人短目标、显示平滑和自动替换／停止已通过本轮一真人场景。下一小批是正常新角色起步装备与同步，随后接多人原生攻击。第二真人、长期稳定性和完整单人失焦恢复仍延后；71项Python检查与43项本机临时DLL检查的口径见集中清单，不能泛化为全玩法已完成。
 
 **公司电脑只做离线开发时，不要求启动Steam或游戏、准备角色／世界或API密钥。** Python标准库即可运行现有检查：`python -B -m unittest discover -s agent -p test_run.py -v`；新增检查沿用本地Mock和临时目录。C#构建仍需.NET 8 SDK及匹配的tModLoader文件，没有这些依赖时将构建标为待验证。真实DeepSeek按需少量检查模拟状态下的工具调用，不以此证明游戏动作成功；详细分工和集中验收清单以TODO为准。
 

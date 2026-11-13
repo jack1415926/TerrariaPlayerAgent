@@ -1,8 +1,6 @@
 # Agent接入与运行
 
-2026-11-10 范围说明：本页 Python 宿主与 `/tpa goal` 仍为单人路径；多人 `/tpamp` 最小探针暂未接入模型。单人开发 JSON 提交短目标已有一次真实链路通过，原生聊天、替换与失焦恢复尚未完整验收。当前优先级以 [TODO](../TODO.md) 为准，多人已验范围见 [集中清单](acceptance-checklist.md)。
-
-更新：2026-10-22。当前已通过单人前台的基础操作闭环：goto到位、原生挖3块、home返程。证据与边界见 [阶段性验收](milestone-acceptance.md)，下一步见 [TODO](../TODO.md)。这是有限任务原型，游戏内自然语言入口和持续陪玩尚未交付。
+更新：2026-11-13。当前优先体验多人短目标：原生中文聊天、接单／行动／结束反馈、替换与停止已通过本轮实机。仅开放左右短移动和停止；多人主动攻击、正常装备来源、挖掘与持续陪玩未交付。单人历史攻击／挖掘／探索入口单列保留，不能用于多人。当前证据见 [集中清单](acceptance-checklist.md)，计划见 [TODO](../TODO.md)。
 
 ## 配置与准备
 
@@ -19,9 +17,24 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 这些是当前启动器配置，不代表未来服务状态或计费承诺。网络使用当前进程配置；本机已有通过HTTP_PROXY／HTTPS_PROXY指向Clash的运行记录，不设置全局Git代理。
 
-先按 [调试说明](debugging.md) 启动独立配置，进入专用测试世界并保持前台。确保AI存在且已有木剑／铜镐；缺少时用开发命令spawn、equip wood、equip pick发一次，默认slot0／slot1，再select 0。宿主不会自动发这套装备，测试物资不等于普通初始装备已接入。AI退出世界不保存。
+默认通过 `scripts/play.ps1` 启动独立配置，加载项目模组、Cheat Sheet、HERO's Mod，不另用只加载项目模组的手动启动方式。角色／世界只用专用测试存档，AI退出世界不保存；辅助开关按实际记录。
 
-## 运行目标
+## 多人短目标与自动验收
+
+```powershell
+.\scripts\play.ps1 -MultiplayerAgent
+.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4
+```
+
+“开服并游玩”进入测试世界后输入 `/tpamp spawn`，再用 `/tpamp goal <自然语言目标>` 下单、`/tpamp stop` 取消。每次移动最多3秒，目标由当前生成者控制，新目标替换旧目标。当前不接受多人命令行 `-Goal` 或无目标身份的外部 `-Stop`。一邮箱一宿主，示例4目标后退出，待机不请求模型；每目标预算和历史独立。
+
+宿主已启动、无活动目标、AI活着且剩余至少2目标额度时运行 `scripts/test-multiplayer-goals.ps1`。脚本按服务器事件完成替换与停止，不能同时人工操作；报告在 `.local/test-results/acceptance-<id>.json`。只读排查用 `play.ps1 -MultiplayerBridge` 与 `run-agent.ps1 -Probe -AgentMode multiplayer_server`，不开放动作。模式／身份字段与有界诊断见 [多人协议](multiplayer-probe.md)。
+
+单在途模型请求会限制线程积累；旧请求可能仍在服务端执行／计费，新目标有时要等它返回才能开始模型调用。取消旧输入与取消服务端请求是两件事。
+
+## 单人运行目标（历史基线）
+
+以下只适用于单人。保持游戏前台，准备 AI 及测试木剑／铜镐；`/tpa equip wood/pick` 是开发发物资，不是正常成长来源。缺少时按调试说明准备，不将其复制到多人产品路径。
 
 ```powershell
 .\scripts\run-agent.ps1 -GoalFile agent/prompts/explore.md -MaxTurns 12
@@ -32,7 +45,7 @@ explore.md包含教程和有限探索／挖掘目标。宿主在调用模型前�
 
 普通自定义Goal不会自动重设已有范围。不传Goal／GoalFile仍使用weapon-test.md历史武器任务；该任务目标与探索不同，不建议把它当默认自由游玩入口。`-CheckApi`仅检查连通，按需使用，不在每次运行前重复调用。
 
-### 常驻宿主（离线可用）
+### 单人常驻宿主
 
 ```powershell
 .\scripts\run-agent.ps1 -HostMode
@@ -42,7 +55,7 @@ explore.md包含教程和有限探索／挖掘目标。宿主在调用模型前�
 
 系统提示词只发能力、规则和限制；目标单独传入，附当前观察和工具定义，不每轮重发整份项目文档／百科。
 
-## 工具语义
+## 单人工具语义与观察
 
 commands最多6条白名单命令，必须写完整`/tpa`前缀，只有status可省略；wait_seconds为整批后的额外模拟等待（0–15秒）。
 
@@ -68,7 +81,7 @@ goto／home核对本次sequence和实际误差，挖掘核对本次目标、工�
 
 真人可用`/tpa range 25`设置范围（允许1–100格），或`/tpa range off`解除，同时取消旧任务。模型工具白名单不开放range。范围保留到重设／移除／退出世界，普通stop不清除；被击退或重生可能出界，outsideBounds反映实际位置，向内返回仍允许。
 
-## 停止、失败与报告
+## 单人停止、失败与报告
 
 游戏内`/tpa stop`，或另一个PowerShell：
 
@@ -86,6 +99,6 @@ stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动
 
 ## 已有检查与用量
 
-离线检查入口：`python -m unittest discover -s agent -p test_run.py -v`。最近51项通过；文档修改不用重跑。游戏机制、停止和最新模型闭环证据集中于阶段报告与validation.md，不每次开工全量重验。
+离线检查入口：`python -B -m unittest discover -s agent -p test_run.py -v`；先按 testing.md 准备可写测试目录。11月13日71项通过，包含多人身份和共享宿主保护。43项 DLL 检查是本机临时检查，不是仓库内完整回归套件。历史失败仍保留在 validation.md，文档修改不重跑测试。
 
-最新完整任务8次请求累计153,201 tokens，含缓存及重复历史，未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。后续持续任务前再评估有界历史和观察去重，不以大型记忆系统或框架迁移阻塞当前功能。
+历史单人8次请求任务累计153,201 tokens，含缓存及重复历史，不是本轮多人任务用量，也未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。本轮被取消的请求仍可能计费，报告 turns=0 不能证明未发请求。后续按实际任务测量，不以大型记忆系统或框架迁移阻塞玩法。

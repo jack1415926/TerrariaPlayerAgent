@@ -1,5 +1,7 @@
 # 人工构建、演示与调试
 
+2026-11-13 范围说明：下方为单人历史调试入口及旧机版本记录。当前多人短目标使用 `scripts/play.ps1 -MultiplayerAgent`，默认加载项目模组、Cheat Sheet、HERO's Mod；目标替换／停止优先运行 [自动验收入口](testing.md)，不要求真人抢时序。当前版本、多人命令和边界见 [新机说明](new-machine-setup.md) 与 [多人协议](multiplayer-probe.md)，不能把下方单人测试发物资／攻击命令用于多人产品验收。
+
 更新：2026-10-22。当前基础闭环结论见 [阶段性验收](milestone-acceptance.md)，历史证据见validation.md；以下提供手动调试入口，未测项不视为通过。
 
 ## 1. 从哪里开始

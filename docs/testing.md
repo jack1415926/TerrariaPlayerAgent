@@ -1,8 +1,30 @@
 # 本地自动测试与 Enter 诊断
 
-包版本：0.1.1；文档更新：2026-10-22。当前目标移动／采掘闭环及前台限制见 [阶段性验收](milestone-acceptance.md)。下方保留各批工具与历史场景，不要求每次全量重跑；本次阶段总结未新增测试。
+包版本：0.1.1；文档更新：2026-11-13。当前多人入口见下方；后面的单人 smoke／战斗／Enter调查为历史工具，不适用于多人目标验收。证据状态统一见 [集中清单](acceptance-checklist.md)，文档整理不重新执行测试。
 
-## 直接运行测试
+## 当前多人短目标验收
+
+通过现有 `scripts/play.ps1 -MultiplayerAgent` 启动，默认加载项目模组、Cheat Sheet、HERO's Mod；真人完成测试世界选择、必要登录和实际辅助设置，执行 `/tpamp spawn`。宿主在线、剩余至少2目标额度、无活动目标时运行：
+
+```powershell
+.\scripts\test-multiplayer-goals.ps1
+```
+
+服务器按真实接单、替换、移动开始事件自动停止，再观察60tick；脚本不伪造模型、位移或伤害，不需要真人抢时序。服务器最长60秒、脚本最长70秒，输出 `.local/test-results/acceptance-<id>.json`。运行中不人工操作；失败保留报告并先查现场，不能盲目重跑。该脚本使用真实宿主的两个目标额度，不是离线测试。
+
+可在另一终端启动一个有界宿主：`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4`。未用动作开关的 `-MultiplayerBridge` 只读模式不能执行此验收。`/tpamp combat` 仅用于目标／接触／生命诊断，不参与索敌或攻击。
+
+仓库内Python离线检查（无需游戏／API）：
+
+```powershell
+New-Item -ItemType Directory -Force .local/test-mailbox | Out-Null
+$env:TPA_TEST_MAILBOX = "$PWD\.local\test-mailbox"
+python -B -m unittest discover -s agent -p test_run.py -v
+```
+
+11月13日71项通过；43项DLL检查在本机被忽略的辅助目录中，依赖本机游戏与手工构造状态，并不是公开可复跑的CI套件。单人图形碰撞隔离检查曾因字体未初始化失败，不以资格门控检查代替完整单人游戏回归。再次确有需要时只提取必要、可参数化的小检查，不先搭测试框架。
+
+## 单人历史 smoke 入口
 
 继续使用现有独立测试角色和普通小世界。只有C#程序集修改才需要构建并加载新版；tmod占用时按debugging.md处理重载或关闭旧实例。文档、提示词和外部Agent修改复用运行中的游戏。需要构建／启动时使用：
 
