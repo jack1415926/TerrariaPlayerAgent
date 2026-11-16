@@ -68,7 +68,7 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 - 槽位变化、`slot=-1`、退世界、清镜像时一并重置显示缓冲；瞬移（重生／传送）会丢弃旧缓冲，不跨瞬移插值。
 - 诊断有界：接收／重复／乱序／外推／stale／瞬移计数，以及最近 64 条校正量（序号、服务器 tick、接收时间、位移量）；`/tpamp diag` 打印摘要与最近 5 条，不写日志文件、不无限累积。
 
-离线证据（尚未实机）：`dotnet run --project tools/DisplaySync.SelfCheck -c Release` 的 108 项回放检查通过，覆盖正常移动、停止、方向反转、不规则间隔、延迟与丢包、乱序／重复、瞬移、重置、历史有界、px/tick 换算、120 ms 延迟生效、150 ms／9 Tick 外推上限、stale 前后位置连续、移动中突然停止不越界、stale 后恢复（落后／领先、速度反向、恢复后立即停止、连续断线），以及本轮新增的瞬移对照（正常节奏瞬移立即重置、断流后 190 px 正常移动不被误判瞬移、断流中显式传送仍立即重置、显式“未传送”走限速恢复）；模组构建 0 警告 0 错误。回放只证明纯逻辑，不证明游戏画面已平滑。
+离线证据（尚未实机）：`dotnet run --project tools/DisplaySync.SelfCheck -c Release` 的 110 项回放检查通过，覆盖正常移动、停止、方向反转、不规则间隔、延迟与丢包、乱序／重复、瞬移、重置、历史有界、px/tick 换算、120 ms 延迟生效、150 ms／9 Tick 外推上限、stale 前后位置连续、移动中突然停止不越界、stale 后恢复（落后／领先、速度反向、恢复后立即停止、连续断线），以及本轮新增的瞬移对照（正常节奏显式瞬移立即重置、未标记的大位移不重置、断流中显式传送仍立即重置、显式“未传送”走限速恢复）；模组构建 0 警告 0 错误。回放只证明纯逻辑，不证明游戏画面已平滑。
 
 实机复验时应先看 `/tpamp diag` 的校正量与 stale／外推计数，再看画面是否仍抖；如果客户端实际不会给镜像跑物理更新，锯齿假设不成立，平滑仍正常但收益会变小。
 
@@ -149,7 +149,7 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 ## 起始装备与持有物同步（批次 3，2026-11-16）
 
 - 原生依据（tML 2026.08.3.0 程序集）：`new Player()` 的构造不发放物品；正常新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty`（私有、UI 入口）按难度写入初始物品。普通经典角色写入 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506）并各自 `Prefix(-1)`。随后经公开的 `PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath)` 触发 `ModPlayer.AddStartingItems`／`ModifyStartingInventory`，再由公开的 `PlayerLoader.SetStartInventory(player, items)` 清空并放置槽位（超过50件时由原生 StartBag 收纳）。`Player.DropItems_GetDefaults` 是 mediumcore 掉落用的铜制三件，本次未采用。本产品只使用普通经典三件。
-- 实现：`Common/StartingKit.cs` 保存上述经典清单条件，`Common/StartingInventory.cs` 的 `TryApply` 先备份 `inventory`／`selectedItem`，再经 `GetStartingItems` 和 `SetStartInventory` 生成，失败时恢复备份并返回异常。`DemoPlayerSystem.Spawn` 只在**多人服务器**（`Main.netMode == Server`）发布 actor 之前调用它；失败直接返回错误文本，不修改 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`、导航和控制器，因此不会留下半初始化却被报告成功的 AI。Stop、目标替换、status、死亡和 `NativeCombat` 的原生重生都没有第二个调用点。
+- 实现：`Common/StartingKit.cs` 保存上述经典清单条件，`Common/StartingInventory.cs` 的 `TryApply` 经 `GetStartingItems` 和 `SetStartInventory` 生成，失败时返回异常；调用方此时还没有发布 actor，因此不备份、不恢复旧库存。`DemoPlayerSystem.Spawn` 只在**多人服务器**（`Main.netMode == Server`）发布 actor 之前调用它；失败直接返回错误文本，不修改 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`、导航和控制器，因此不会留下半初始化却被报告成功的 AI。Stop、目标替换、status、死亡和 `NativeCombat` 的原生重生都没有第二个调用点。
 - 客户端：`StateKind` 在包尾追加 `HeldItemWire`（selected slot、type、prefix、stack）；客户端只更新镜像选中槽的显示物品，服务器仍是权威；换槽清旧槽，镜像重建后由下一包恢复。修饰词经 `Item.Prefix(int)` 应用，不直接写 `item.prefix`：前者校验 `CanHavePrefixes`／`CanApplyPrefix` 并计算伤害、速度、稀有度等派生值，直接赋值会跳过这些步骤。不改真人背包，不复制完整背包同步。
-- 离线证据：`tools/InventorySync.SelfCheck` 41 项通过（6字节顺序与追加兼容、三件清单、`GetStartingItems` 扩展、失败／半放置回滚、单一调用点）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。
+- 离线证据：`tools/InventorySync.SelfCheck` 37 项通过（6字节顺序与追加兼容、三件清单、`GetStartingItems` 扩展、失败处理与单一调用点）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。失败测试是异常注入，且 `Spawn` 的发布顺序由源码契约检查覆盖，不能当作真实游戏已验证。
 - 实机待验：普通经典新角色与 AI 初始物品逐项对照（三件）；客户端手持物及修饰词显示；stop／目标替换／一次原生重生后不重复发放；客户端重建镜像不产生额外物品；其他模组 `AddStartingItems` 是否给 AI 额外物品。

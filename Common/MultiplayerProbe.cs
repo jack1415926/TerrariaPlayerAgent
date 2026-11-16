@@ -199,7 +199,7 @@ public sealed class MultiplayerProbe : ModSystem
             {
                 Sequence = sequence, ServerTick = serverTick,
                 X = position.X, Y = position.Y, VelocityX = velocity.X, VelocityY = velocity.Y,
-                ReceivedAt = Now, Teleported = (flags & 1) != 0, TeleportKnown = true
+                ReceivedAt = Now, Teleported = (flags & 1) != 0
             });
             mirror.direction = direction; mirror.team = team;
             mirror.statLife = life; mirror.dead = life <= 0;

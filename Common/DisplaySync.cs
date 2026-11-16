@@ -14,7 +14,6 @@ public struct SyncSnapshot
     public double ReceivedAt;
     // The server marks a teleport/respawn on its own authoritative timeline; the client never guesses it.
     public bool Teleported;
-    public bool TeleportKnown;
 }
 
 public struct DisplaySample
@@ -49,7 +48,6 @@ public sealed class DisplaySync
     public double InterpolationDelay = 0.12;
     public double MaxExtrapolation = 0.15;
     public double StaleAfter = 0.5;
-    public float TeleportDistance = DefaultTeleportDistance;
     // Shared with the server, which flags a jump on its fixed 6-tick send cadence.
     public const float DefaultTeleportDistance = 96f;
     public float StopSpeed = 0.05f;
@@ -61,7 +59,6 @@ public sealed class DisplaySync
     private readonly List<CorrectionSample> corrections = new();
     private uint lastSequence;
     private bool hasSequence;
-    private float lastSequenceX, lastSequenceY;
     private bool hasDisplay;
     private float displayX, displayY;
     private bool hasSampleTime;
@@ -89,7 +86,7 @@ public sealed class DisplaySync
         if (hasSequence && snapshot.Sequence < lastSequence) { OutOfOrderCount++; return SnapshotResult.OutOfOrder; }
 
         bool outage = hasSequence && snapshot.ReceivedAt - lastReceivedAt > StaleAfter;
-        if (hasSequence && IsTeleport(in snapshot, outage))
+        if (hasSequence && snapshot.Teleported)
         {
             // An explicit teleport always resets playback, even when it arrives after an outage.
             snapshots.Clear();
@@ -104,8 +101,6 @@ public sealed class DisplaySync
         }
 
         lastSequence = snapshot.Sequence;
-        lastSequenceX = snapshot.X;
-        lastSequenceY = snapshot.Y;
         lastReceivedAt = snapshot.ReceivedAt;
         hasSequence = true;
         snapshots.Add(snapshot);
@@ -203,14 +198,6 @@ public sealed class DisplaySync
         return true;
     }
 
-    private bool IsTeleport(in SyncSnapshot snapshot, bool outage)
-    {
-        if (snapshot.TeleportKnown) return snapshot.Teleported;
-        // Without a server marker only a jump that arrives on a normal cadence is trusted;
-        // a big jump after an outage is movement accumulated while packets were lost.
-        return !outage && Distance(lastSequenceX, lastSequenceY, snapshot.X, snapshot.Y) > TeleportDistance;
-    }
-
     // Called by the client with the distance it had to move the mirror this frame.
     public void RecordCorrection(float offset, double now)
     {
@@ -244,7 +231,6 @@ public sealed class DisplaySync
         hasSequence = false;
         hasDisplay = false;
         lastSequence = 0;
-        lastSequenceX = lastSequenceY = 0;
         displayX = displayY = 0;
         hasSampleTime = false;
         lastSampleTime = 0;

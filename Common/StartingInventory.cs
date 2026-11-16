@@ -15,8 +15,6 @@ internal static class StartingInventory
 {
     internal static Exception? TryApply(Player player)
     {
-        Item[] backup = (Item[])player.inventory.Clone();
-        int previousSelected = player.selectedItem;
         try
         {
             var vanilla = new List<Item>(StartingKit.ClassicItemTypes.Length);
@@ -34,9 +32,6 @@ internal static class StartingInventory
         }
         catch (Exception ex)
         {
-            // Restore slots even though the caller discards this unpublished player on failure.
-            Array.Copy(backup, player.inventory, backup.Length);
-            player.selectedItem = previousSelected;
             return ex;
         }
     }

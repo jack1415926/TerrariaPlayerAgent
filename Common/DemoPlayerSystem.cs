@@ -318,7 +318,8 @@ public sealed class DemoPlayerSystem : ModSystem
     {
         if (Actor == null)
             return;
-        if (Main.netMode == NetmodeID.MultiplayerClient || !ReferenceEquals(Main.player[Actor.whoAmI], Actor))
+        // Actor is only created by single-player or server Spawn; a client has no authoritative actor.
+        if (!ReferenceEquals(Main.player[Actor.whoAmI], Actor))
         {
             Remove();
             return;

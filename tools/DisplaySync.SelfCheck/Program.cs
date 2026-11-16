@@ -21,6 +21,7 @@ internal static class Program
         MovingThenStoppingDoesNotOvershoot();
         OutOfOrderAndDuplicate();
         TeleportResetsPlayback();
+        UnmarkedJumpIsNotATeleport();
         ResetClearsDisplayAndCounters();
         CorrectionHistoryIsBounded();
         StaleRecoveryBehindPrediction();
@@ -31,7 +32,7 @@ internal static class Program
         BuffersStayBounded();
         NormalPlaybackIsNotRateLimited();
         LongOutageMovementIsNotATeleport();
-        RealTeleportOnNormalCadenceResetsImmediately();
+        ExplicitTeleportOnNormalCadenceResetsImmediately();
         ExplicitTeleportDuringOutageResetsImmediately();
         ExplicitMovementAfterOutageResyncs();
 
@@ -42,12 +43,12 @@ internal static class Program
     }
 
     private static SyncSnapshot Snap(uint sequence, double receivedAt, float x, float y = 0f,
-        float vx = 2f, float vy = 0f, long tick = 0, bool teleported = false, bool teleportKnown = false) =>
+        float vx = 2f, float vy = 0f, long tick = 0, bool teleported = false) =>
         new()
         {
             Sequence = sequence, ServerTick = tick, X = x, Y = y,
             VelocityX = vx, VelocityY = vy, ReceivedAt = receivedAt,
-            Teleported = teleported, TeleportKnown = teleportKnown
+            Teleported = teleported
         };
 
     private static void NormalMovement()
@@ -187,11 +188,20 @@ internal static class Program
     {
         var sync = new DisplaySync();
         sync.Add(Snap(1, 0.0, 0f));
-        sync.Add(Snap(2, 0.1, 500f));
-        Check("teleport counted", sync.TeleportCount >= 1);
+        sync.Add(Snap(2, 0.1, 500f, teleported: true));
+        Check("server teleport counted", sync.TeleportCount == 1);
         Check("teleport keeps only the new snapshot", sync.HasSnapshots);
         sync.TrySample(0.12, out DisplaySample sample);
         Near("teleport shows the new position at once", 500f, sample.X, 0.001f);
+    }
+
+    private static void UnmarkedJumpIsNotATeleport()
+    {
+        var sync = new DisplaySync();
+        sync.Add(Snap(1, 0.0, 0f));
+        sync.Add(Snap(2, 0.1, 500f)); // no server teleport flag
+        Check("unmarked jump is not a teleport", sync.TeleportCount == 0);
+        Check("unmarked jump keeps both snapshots", sync.BufferedSnapshots == 2);
     }
 
     private static void ResetClearsDisplayAndCounters()
@@ -336,7 +346,7 @@ internal static class Program
         var (sync, previous, maxStep, corrected) = FreezePrediction();
         RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
 
-        // 190 px of real movement accumulated during the outage; no server marker is available.
+        // The server explicitly says this is not a teleport; the gap is movement lost during the outage.
         sync.Add(Snap(3, 0.8, 200f, vx: 0f));
         Check("outage movement is not counted as a teleport", sync.TeleportCount == 0);
         RunFrames(sync, 0.8, 4.0, ref previous, ref maxStep, ref corrected);
@@ -345,15 +355,15 @@ internal static class Program
         Near("outage movement converges", 200f, previous, 0.5f);
     }
 
-    private static void RealTeleportOnNormalCadenceResetsImmediately()
+    private static void ExplicitTeleportOnNormalCadenceResetsImmediately()
     {
         var sync = new DisplaySync();
         sync.Add(Snap(1, 0.0, 0f));
         sync.Add(Snap(2, 0.1, 10f));
         sync.TrySample(0.12, out _);
 
-        sync.Add(Snap(3, 0.2, 500f)); // unknown marker, but it arrives on the normal cadence
-        Check("normal-cadence jump is a teleport", sync.TeleportCount == 1);
+        sync.Add(Snap(3, 0.2, 500f, teleported: true));
+        Check("normal-cadence teleport is counted", sync.TeleportCount == 1);
         Check("normal-cadence teleport samples", sync.TrySample(0.25, out DisplaySample sample));
         Near("normal-cadence teleport lands immediately", 500f, sample.X, 0.001f);
         Check("normal-cadence teleport is not eased", !sample.Correcting);
@@ -364,7 +374,7 @@ internal static class Program
         var (sync, previous, maxStep, corrected) = FreezePrediction();
         RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
 
-        sync.Add(Snap(3, 0.8, 300f, teleported: true, teleportKnown: true));
+        sync.Add(Snap(3, 0.8, 300f, teleported: true));
         Check("explicit teleport during outage is counted", sync.TeleportCount == 1);
         Check("explicit teleport samples", sync.TrySample(0.81, out DisplaySample sample));
         Near("explicit teleport lands immediately", 300f, sample.X, 0.001f);
@@ -376,7 +386,7 @@ internal static class Program
         var (sync, previous, maxStep, corrected) = FreezePrediction();
         RunFrames(sync, 0.7, 0.8, ref previous, ref maxStep, ref corrected);
 
-        sync.Add(Snap(3, 0.8, 200f, vx: 0f, teleported: false, teleportKnown: true));
+        sync.Add(Snap(3, 0.8, 200f, vx: 0f, teleported: false));
         Check("explicit movement is not a teleport", sync.TeleportCount == 0);
         Check("explicit movement resyncs", sync.TrySample(0.81, out DisplaySample sample) && sample.Correcting);
     }

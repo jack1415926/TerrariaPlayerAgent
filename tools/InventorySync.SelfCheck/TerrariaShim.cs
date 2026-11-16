@@ -56,7 +56,6 @@ namespace Terraria.ModLoader
     internal static class PlayerLoader
     {
         internal static Func<Player, IEnumerable<Item>, bool, List<Item>>? GetStartingItemsHook;
-        internal static Action<Player, IList<Item>>? SetStartInventoryHook;
         internal static readonly List<(int Type, int Prefix)> PrefixCalls = new();
         internal static int GetStartingItemsCalls;
         internal static int SetStartInventoryCalls;
@@ -70,11 +69,6 @@ namespace Terraria.ModLoader
         public static void SetStartInventory(Player player, IList<Item> items)
         {
             SetStartInventoryCalls++;
-            if (SetStartInventoryHook != null)
-            {
-                SetStartInventoryHook(player, items);
-                return;
-            }
             for (int i = 0; i < player.inventory.Length; i++)
                 player.inventory[i] = i < items.Count ? items[i] : new Item();
         }

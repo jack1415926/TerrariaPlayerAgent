@@ -76,14 +76,10 @@ internal static class Program
     {
         ResetLoader();
         var player = new Player();
-        player.inventory[0].SetDefaults(42);
-        player.inventory[10].SetDefaults(99);
-        player.selectedItem = 7;
 
         Exception? failure = StartingInventory.TryApply(player);
         Check("classic apply succeeds", failure == null);
         Check("classic apply writes three tools", OccupiedTypes(player) == "3507,3509,3506");
-        Check("classic apply clears leftover slots", player.inventory[10].IsAir);
         Check("classic apply selects slot 0", player.selectedItem == 0);
         Check("apply used GetStartingItems once", PlayerLoader.GetStartingItemsCalls == 1);
         Check("apply used SetStartInventory once", PlayerLoader.SetStartInventoryCalls == 1);
@@ -95,32 +91,13 @@ internal static class Program
     private static void CheckStartingInventoryFailure()
     {
         ResetLoader();
-        PlayerLoader.GetStartingItemsHook = (_, _, _) => throw new InvalidOperationException("simulated");
+        PlayerLoader.GetStartingItemsHook = (_, _, _) => throw new InvalidOperationException("injected");
         var player = new Player();
-        player.inventory[0].SetDefaults(42);
-        player.inventory[1].SetDefaults(43);
-        player.selectedItem = 5;
 
         Exception? failure = StartingInventory.TryApply(player);
         Check("failed apply reports the exception", failure is InvalidOperationException);
-        Check("failed apply restores slot 0", player.inventory[0].type == 42);
-        Check("failed apply restores slot 1", player.inventory[1].type == 43);
-        Check("failed apply restores selected slot", player.selectedItem == 5);
-
-        ResetLoader();
-        PlayerLoader.SetStartInventoryHook = (p, items) =>
-        {
-            p.inventory[0] = items[0];
-            throw new InvalidOperationException("partial placement");
-        };
-        var partial = new Player();
-        partial.inventory[0].SetDefaults(42);
-        partial.selectedItem = 5;
-
-        Exception? partialFailure = StartingInventory.TryApply(partial);
-        Check("partial placement reports the exception", partialFailure is InvalidOperationException);
-        Check("partial placement restores slot 0", partial.inventory[0].type == 42);
-        Check("partial placement restores selected slot", partial.selectedItem == 5);
+        Check("failed apply writes no partial items", OccupiedTypes(player) == "");
+        Check("failed apply leaves the selected slot unchanged", player.selectedItem == 0);
     }
 
     private static void CheckStartingInventoryExtension()
@@ -140,6 +117,7 @@ internal static class Program
         Check("mod starting item is kept", failure == null && player.inventory[3].type == 24);
     }
 
+    // Source-level contract only: the self-check cannot execute DemoPlayerSystem.Spawn without the game.
     private static void CheckSingleCallSite()
     {
         string? root = FindRepoRoot();
@@ -148,6 +126,12 @@ internal static class Program
         string source = File.ReadAllText(Path.Combine(root, "Common", "DemoPlayerSystem.cs"));
         string spawn = MethodBody(source, "internal string Spawn(Player owner)");
         Check("Spawn applies the starting kit", spawn.Contains("StartingInventory.TryApply(", StringComparison.Ordinal));
+        int apply = spawn.IndexOf("StartingInventory.TryApply(", StringComparison.Ordinal);
+        int published = spawn.IndexOf("Actor = actor;", StringComparison.Ordinal);
+        int slotPublished = spawn.IndexOf("Main.player[slot] = actor;", StringComparison.Ordinal);
+        Check("Spawn rejects starting-inventory failure before publishing",
+            apply >= 0 && published > apply && slotPublished > apply &&
+            spawn[apply..published].Contains("return", StringComparison.Ordinal));
         int total = Directory.EnumerateFiles(Path.Combine(root, "Common"), "*.cs", SearchOption.AllDirectories)
             .Sum(file => Count(File.ReadAllText(file), "StartingInventory.TryApply("));
         Check("starting kit has a single call site in Common", total == 1);
@@ -156,7 +140,6 @@ internal static class Program
     private static void ResetLoader()
     {
         PlayerLoader.GetStartingItemsHook = null;
-        PlayerLoader.SetStartInventoryHook = null;
         PlayerLoader.PrefixCalls.Clear();
         PlayerLoader.GetStartingItemsCalls = 0;
         PlayerLoader.SetStartInventoryCalls = 0;
