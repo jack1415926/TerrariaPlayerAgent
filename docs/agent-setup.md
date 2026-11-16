@@ -28,7 +28,7 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 “开服并游玩”进入测试世界后输入 `/tpamp spawn`，再用 `/tpamp goal <自然语言目标>` 下单、`/tpamp stop` 取消。每次移动最多3秒，目标由当前生成者控制，新目标替换旧目标。当前不接受多人命令行 `-Goal` 或无目标身份的外部 `-Stop`。一邮箱一宿主，示例4目标后退出，待机不请求模型；每目标预算和历史独立。
 
-批次3起，多人服务器 Spawn 在发布 AI 之前给普通经典角色发放三件（铜短剑／镐／斧，Carrot 仅 `Main.runningCollectorsEdition` 条件），只初始化一次；初始化失败则不生成 AI 并回报错误。客户端镜像显示当前选中槽持有物；这是离线实现，尚未实机。单人流程仍不自动发放，继续使用 `equip wood/pick` 开发物资。
+批次3起，多人服务器 Spawn 在发布 AI 之前给普通经典角色发放三件（铜短剑／镐／斧），只初始化一次；初始化失败则不生成 AI 并回报错误。客户端镜像显示当前选中槽持有物；这是离线实现，尚未实机。单人流程仍不自动发放，继续使用 `equip wood/pick` 开发物资。
 
 宿主已启动、无活动目标、AI活着且剩余至少2目标额度时运行 `scripts/test-multiplayer-goals.ps1`。脚本按服务器事件完成替换与停止，不能同时人工操作；报告在 `.local/test-results/acceptance-<id>.json`。只读排查用 `play.ps1 -MultiplayerBridge` 与 `run-agent.ps1 -Probe -AgentMode multiplayer_server`，不开放动作。模式／身份字段与有界诊断见 [多人协议](multiplayer-probe.md)。
 

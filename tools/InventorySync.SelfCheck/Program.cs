@@ -31,7 +31,6 @@ internal static class Program
 
         CheckWireCompatibility();
         CheckClassicKit();
-        CheckCollectorKit();
         CheckStartingInventoryApply();
         CheckStartingInventoryFailure();
         CheckStartingInventoryExtension();
@@ -67,21 +66,10 @@ internal static class Program
 
     private static void CheckClassicKit()
     {
-        StartingKit.Entry[] entries = StartingKit.ClassicEntries(collectorsEdition: false);
-        Check("classic kit has three items", entries.Length == 3);
-        Check("classic kit types are copper shortsword, pickaxe, axe",
-            string.Join(",", entries.Select(entry => entry.Type)) == "3507,3509,3506");
-        Check("classic kit never grants Carrot", entries.All(entry => entry.Type != StartingKit.Carrot));
-        Check("classic tools roll a prefix", entries.All(entry => entry.RollPrefix));
-    }
-
-    private static void CheckCollectorKit()
-    {
-        StartingKit.Entry[] entries = StartingKit.ClassicEntries(collectorsEdition: true);
-        Check("collector kit appends Carrot to the classic three",
-            entries.Length == 4 && entries[3].Type == StartingKit.Carrot &&
-            string.Join(",", entries.Take(3).Select(entry => entry.Type)) == "3507,3509,3506");
-        Check("collector Carrot is not prefixed", !entries[3].RollPrefix);
+        int[] types = StartingKit.ClassicItemTypes;
+        Check("classic kit has three items", types.Length == 3);
+        Check("classic kit is the copper shortsword, pickaxe and axe",
+            string.Join(",", types) == "3507,3509,3506");
     }
 
     private static void CheckStartingInventoryApply()
@@ -92,12 +80,11 @@ internal static class Program
         player.inventory[10].SetDefaults(99);
         player.selectedItem = 7;
 
-        Exception? failure = StartingInventory.TryApply(player, collectorsEdition: false);
+        Exception? failure = StartingInventory.TryApply(player);
         Check("classic apply succeeds", failure == null);
         Check("classic apply writes three tools", OccupiedTypes(player) == "3507,3509,3506");
         Check("classic apply clears leftover slots", player.inventory[10].IsAir);
         Check("classic apply selects slot 0", player.selectedItem == 0);
-        Check("classic apply never adds Carrot", !HasType(player, StartingKit.Carrot));
         Check("apply used GetStartingItems once", PlayerLoader.GetStartingItemsCalls == 1);
         Check("apply used SetStartInventory once", PlayerLoader.SetStartInventoryCalls == 1);
         Check("apply rolled -1 prefixes for the three tools",
@@ -114,7 +101,7 @@ internal static class Program
         player.inventory[1].SetDefaults(43);
         player.selectedItem = 5;
 
-        Exception? failure = StartingInventory.TryApply(player, collectorsEdition: false);
+        Exception? failure = StartingInventory.TryApply(player);
         Check("failed apply reports the exception", failure is InvalidOperationException);
         Check("failed apply restores slot 0", player.inventory[0].type == 42);
         Check("failed apply restores slot 1", player.inventory[1].type == 43);
@@ -130,7 +117,7 @@ internal static class Program
         partial.inventory[0].SetDefaults(42);
         partial.selectedItem = 5;
 
-        Exception? partialFailure = StartingInventory.TryApply(partial, collectorsEdition: false);
+        Exception? partialFailure = StartingInventory.TryApply(partial);
         Check("partial placement reports the exception", partialFailure is InvalidOperationException);
         Check("partial placement restores slot 0", partial.inventory[0].type == 42);
         Check("partial placement restores selected slot", partial.selectedItem == 5);
@@ -149,7 +136,7 @@ internal static class Program
         };
         var player = new Player();
 
-        Exception? failure = StartingInventory.TryApply(player, collectorsEdition: false);
+        Exception? failure = StartingInventory.TryApply(player);
         Check("mod starting item is kept", failure == null && player.inventory[3].type == 24);
     }
 
@@ -177,9 +164,6 @@ internal static class Program
 
     private static string OccupiedTypes(Player player) =>
         string.Join(",", player.inventory.Where(item => !item.IsAir).Select(item => item.type));
-
-    private static bool HasType(Player player, int type) =>
-        player.inventory.Any(item => item.type == type);
 
     private static string? FindRepoRoot()
     {

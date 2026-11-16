@@ -14,7 +14,7 @@
 
 原失败点(2103,295)的现场检查为Grass，上方(2103,294)是Trees，isTreeTrunk=true、frameX=0、frameY=132，CanKillTile=false。本机WorldGen.CanKillTile的树干支撑分支返回false；Player.PickTile随后将本次挖掘伤害置0，因此会按冷却挥镐但既不变泥土也不移除。该规则也见 [Official Terraria Wiki 方块说明](https://terraria.wiki.gg/wiki/Block)，API见 [WorldGen文档](https://docs.tmodloader.net/docs/stable/class_world_gen.html)。修复遵守该规则，未强制移除树或支撑。
 
-2026-10-22 新增 `/tpa equip pick`，向AI slot1发放测试铜镐（CopperPickaxe，item=3509，pick=35），保留slot0原有测试剑。这是单人开发物资；2026-11-16 批次3已在多人服务器 Spawn 按普通经典三件初始化（Carrot 仅典藏版条件，待实机），单人历史流程不变。
+2026-10-22 新增 `/tpa equip pick`，向AI slot1发放测试铜镐（CopperPickaxe，item=3509，pick=35），保留slot0原有测试剑。这是单人开发物资；2026-11-16 批次3已在多人服务器 Spawn 按普通经典三件初始化（待实机），单人历史流程不变。
 
 普通挥动镐接入本机 `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile`；前两层跳过额外玩家槽位的归属检查作有限适配。工具目标 `Player.tileTargetX/Y` 是共享静态字段，只在本次原生范围检查和挖掘方法调用内替换，并用 finally 恢复；不切换 Main.myPlayer，不写真人鼠标位置。`IsTargetTileInItemRange` 和 `PickTile` 签名见 [tML Player 文档](https://docs.tmodloader.net/docs/stable/class_player.html)，本机IL摘录保存在被Git忽略的 `.local/research`。
 
@@ -27,7 +27,7 @@
 | 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | `/tpa equip iron` 额外发放的测试装备，已实测命中史莱姆和僵尸 |
 | 木剑 Wooden Sword | `WoodenSword = 24` | `/tpa equip wood` 额外发放的测试装备，已实测命中恶魔眼 |
 
-本机依据：tML 2026.08.3.0 程序集（本次离线核对使用 `.local/tml/2026.08.3.0` 副本，原安装目录为 `F:\SteamLibrary\steamapps\common\tModLoader`）中 `Terraria.ID.ItemID` 常量；`UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 的普通初始武器发放使用 3507／3509／3506 并各调用 `Prefix(-1)`，Carrot（603）只在 `Main.runningCollectorsEdition` 为真时追加、不调用 `Prefix`。`Player` 构造函数初始化背包物品对象，但不执行建角发装备流程；批次3的 `DemoPlayerSystem.Spawn` 只在多人服务器、发布 actor 之前调用 `StartingInventory`，失败不留下 AI；单人仍由 `Equip` 向 slot 0 发放测试剑。
+本机依据：tML 2026.08.3.0 程序集（本次离线核对使用 `.local/tml/2026.08.3.0` 副本，原安装目录为 `F:\SteamLibrary\steamapps\common\tModLoader`）中 `Terraria.ID.ItemID` 常量；`UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 的普通初始武器发放使用 3507／3509／3506 并各调用 `Prefix(-1)`。`Player` 构造函数初始化背包物品对象，但不执行建角发装备流程；批次3的 `DemoPlayerSystem.Spawn` 只在多人服务器、发布 actor 之前调用 `StartingInventory`，只发放普通经典三件，失败不留下 AI；单人仍由 `Equip` 向 slot 0 发放测试剑。
 
 项目证据：`scripts/smoke-test.ps1 -Combat` 显式执行 equip；`.local/test-results/smoke-20261021-215122.json` 中 AI slot=1 的命中事件记录 item=4 或 item=24。不能把这些结果写成“默认铜短剑已经通过”。
 

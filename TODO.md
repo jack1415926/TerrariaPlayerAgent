@@ -17,7 +17,7 @@
 | 原生接触受伤、死亡、软核重生 | 日志与用户复测；没有新增选敌算法，不等于主动战斗通过 |
 | 服务器只读桥与世界／AI 身份变化 | Host & Play 实机通过；远程独立服务器未验 |
 | 中文短目标、反馈、替换与停止 | 真实模型／用户确认；自动验收 A→B→stop 后60tick输入未恢复 |
-| 多人初始装备与持有物显示（批次3，离线） | 服务器 Spawn 按普通经典三件经 `GetStartingItems` 初始化一次，Carrot 仅典藏版条件；失败不发布 AI；客户端显示选中槽持有物；46项回放通过；未实机 |
+| 多人初始装备与持有物显示（批次3，离线） | 服务器 Spawn 按普通经典三件经 `GetStartingItems` 初始化一次；失败不发布 AI；客户端显示选中槽持有物；41项回放通过；未实机 |
 | 取消、连接与宿主身份保护 | 71项 Python、43项本机临时 DLL 检查；不能据此宣称真实第二真人／断线重连已通过 |
 
 目前多人动作仅左右短移动和停止；批次3已在服务器 Spawn 接入经典初始装备与客户端持有物显示（离线，待实机）。单人历史攻击／挖掘不能直接当作多人能力。上轮收尾为宿主退出、AI保留且输入清空，这是验收时点记录，不是实时服务状态。
@@ -38,7 +38,7 @@
 3. 覆盖 stop／目标替换与一次原生重生，初始物品不重复发放；代表性检查通过后不遍历全装备。
 4. 只对受影响的库存、生命周期、镜像与停止路径回归，构建后加载实测。原生入口或短剑使用链仍不明时标明缺口，先交付该小批，不临时扩成全战斗框架。
 
-2026-11-16 离线实现：`Common/StartingInventory.cs` 经 `PlayerLoader.GetStartingItems`／`SetStartInventory` 使用普通经典三件，仅在多人服务器 Spawn 发布 actor 前调用一次，失败回滚并拒绝生成（单人历史流程不变）；`StartingKit.cs` 保留 Carrot 仅 `Main.runningCollectorsEdition` 条件；`StateKind` 追加 `HeldItemWire`，客户端经 `Item.Prefix(int)` 显示持有物；`tools/InventorySync.SelfCheck` 46 项、71 项 Python 测试与 C# 构建通过。复选框保持未勾选，等待个人电脑实机对照与重生复验；不提前进入随后一批。
+2026-11-16 离线实现：`Common/StartingInventory.cs` 经 `PlayerLoader.GetStartingItems`／`SetStartInventory` 使用普通经典三件，仅在多人服务器 Spawn 发布 actor 前调用一次，失败回滚并拒绝生成（单人历史流程不变）；`StartingKit.cs` 只保留铜短剑／镐／斧；`StateKind` 追加 `HeldItemWire`，客户端经 `Item.Prefix(int)` 显示持有物；`tools/InventorySync.SelfCheck` 41 项、71 项 Python 测试与 C# 构建通过。复选框保持未勾选，等待个人电脑实机对照与重生复验；不提前进入随后一批。
 
 ## 随后一批：正常装备下的多人原生攻击
 

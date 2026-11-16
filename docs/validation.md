@@ -269,15 +269,15 @@ AI保留，主动输入已停止，自动重生仍默认开启。通用矿石强
 
 ## 2026-11-16 批次3初始装备与持有物同步（离线）
 
-- 程序集核对（tML 2026.08.3.0）：`new Player()` 构造函数不发放初始物品；普通新角色在 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 中按难度写入，普通经典三件为 CopperShortsword／CopperPickaxe／CopperAxe（3507／3509／3506），Carrot（603）仅在 `Main.runningCollectorsEdition` 为真时追加且不调用 `Prefix`（本行原写作无条件四件，2026-11-16 晚修正）；公开的 `PlayerLoader.GetStartingItems` 是 `ModPlayer.AddStartingItems`／`ModifyStartingInventory` 的扩展入口。`Player.DropItems_GetDefaults` 只给 mediumcore 铜制三件，本批未用。
+- 程序集核对（tML 2026.08.3.0）：`new Player()` 构造函数不发放初始物品；普通新角色在 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 中按难度写入，普通经典三件为 CopperShortsword／CopperPickaxe／CopperAxe（3507／3509／3506），均调用 `Prefix(-1)`；公开的 `PlayerLoader.GetStartingItems` 是 `ModPlayer.AddStartingItems`／`ModifyStartingInventory` 的扩展入口。`Player.DropItems_GetDefaults` 只给 mediumcore 铜制三件，本批未用。本产品只发放这三件。
 - 实现：新增 `Common/StartingInventory.cs`，仅多人服务器 `DemoPlayerSystem.Spawn` 成功后调用一次，清空库存、按经典顺序写入并 `selectedItem=0`；Stop、目标替换、status、死亡与原生重生不复用该路径。`Snapshot()` 库存项新增 `prefix`。（后改为发布前调用并在失败时拒绝生成，见下。）
 - 客户端：`HeldItemWire`（slot／type／prefix／stack）追加在 StateKind 包尾；镜像只更新选中槽显示物品，换槽清旧槽，收到相同值不重复 `SetDefaults`；不改真人背包，不复制完整背包同步。
-- 检查：`tools/InventorySync.SelfCheck` 14项通过；71项 Python 通过；DisplaySync 108项回归通过；C# 构建0警告0错误，`.tmod` 130.0 KB。未启动游戏、未调用真实模型／API。（后修正为46项，见下。）
+- 检查：`tools/InventorySync.SelfCheck` 14项通过；71项 Python 通过；DisplaySync 108项回归通过；C# 构建0警告0错误，`.tmod` 130.0 KB。未启动游戏、未调用真实模型／API。（后修正为41项，见下。）
 - 未验收：普通经典新角色与 AI 初始物品逐项对照、客户端实际手持显示、Stop／替换／一次原生重生后不重复发放、镜像重建、其他模组 `AddStartingItems` 的影响。单人历史流程未改，仍用 `equip wood/pick` 开发物资。
 
-### 2026-11-16 批次3修正：Carrot 条件、失败回滚与修饰词
+### 2026-11-16 批次3修正：初始清单、失败回滚与修饰词
 
-- 重新核对 tML 2026.08.3.0 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` IL：`difficulty != 3` 时依次写入 3507／3509／3506 并各调用 `Item.Prefix(-1)`；`Main.runningCollectorsEdition` 为真时才追加 603，且不调用 `Prefix`。`Main.runningCollectorsEdition` 是 public static 字段；`PlayerLoader.SetStartInventory` 是同一方法末尾使用的公开放置入口。
-- 修正：`StartingKit.ClassicEntries` 只生成普通三件，Carrot 走典藏版分支；`StartingInventory.TryApply` 在发布 actor 前运行，失败时恢复库存引用与 `selectedItem` 并返回异常；`Spawn` 失败返回错误文本，不写 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`，控制器保持原状。客户端 `ApplyHeldItem` 改用 `Item.Prefix(int)`，不再直接赋值 `item.prefix`。
-- 检查：`tools/InventorySync.SelfCheck` 46项通过（原14项＋6字节顺序／追加兼容、Carrot 条件、`GetStartingItems` 扩展、失败与半放置回滚、单一调用点）；71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。自检使用本地 Terraria shim，只证明清单与回滚逻辑，不证明真实发放或绘制。
-- 仍待实机：普通经典新角色对照（无 Carrot）、客户端手持与修饰词显示、stop／替换／一次原生重生不重复初始化、目标环境（记录为 tML 2026.9.3.1）中 `Main.runningCollectorsEdition` 与 `SetStartInventory` 的实际表现。
+- 重新核对 tML 2026.08.3.0 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` IL：`difficulty != 3` 时依次写入 3507／3509／3506 并各调用 `Item.Prefix(-1)`；`PlayerLoader.SetStartInventory` 是同一方法末尾使用的公开放置入口。初始清单只保留这三件。
+- 修正：`StartingKit.ClassicItemTypes` 只保留普通三件；`StartingInventory.TryApply` 在发布 actor 前运行，失败时恢复库存引用与 `selectedItem` 并返回异常；`Spawn` 失败返回错误文本，不写 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`，控制器保持原状。客户端 `ApplyHeldItem` 改用 `Item.Prefix(int)`，不再直接赋值 `item.prefix`。
+- 检查：`tools/InventorySync.SelfCheck` 41项通过（原14项＋6字节顺序／追加兼容、三件清单、`GetStartingItems` 扩展、失败与半放置回滚、单一调用点）；71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。自检使用本地 Terraria shim，只证明清单与回滚逻辑，不证明真实发放或绘制。
+- 仍待实机：普通经典新角色对照（三件）、客户端手持与修饰词显示、stop／替换／一次原生重生不重复初始化、目标环境（记录为 tML 2026.9.3.1）中 `SetStartInventory` 的实际表现。

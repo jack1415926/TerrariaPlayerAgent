@@ -15,7 +15,6 @@ namespace Terraria
         public string Name => type switch
         {
             0 => "",
-            603 => "Carrot",
             3507 => "Copper Shortsword",
             3509 => "Copper Pickaxe",
             3506 => "Copper Axe",

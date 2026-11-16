@@ -75,14 +75,13 @@ public sealed class DemoPlayerSystem : ModSystem
         if (Main.netMode == NetmodeID.Server)
         {
             // Initialize before publishing the actor: a failure leaves the slot, controller and generation untouched.
-            if (StartingInventory.TryApply(actor, Main.runningCollectorsEdition) is { } failure)
+            if (StartingInventory.TryApply(actor) is { } failure)
             {
                 Mod.Logger.Error($"[TPA] starting inventory failed; AI not spawned: {failure}");
                 return $"Spawn failed: starting inventory initialization failed ({failure.GetType().Name}); " +
                     "AI was not spawned. See the server log.";
             }
-            Mod.Logger.Info($"[TPA] starting inventory: collectorsEdition={Main.runningCollectorsEdition}; " +
-                StartingInventory.Describe(actor));
+            Mod.Logger.Info($"[TPA] starting inventory: {StartingInventory.Describe(actor)}");
         }
         previousSlot = Main.player[slot];
         Actor = actor;

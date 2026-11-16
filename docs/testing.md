@@ -27,7 +27,7 @@ python -B -m unittest discover -s agent -p test_run.py -v
 批次3新增的离线回放（无需游戏／API）：
 
 ```powershell
-dotnet run --project tools/InventorySync.SelfCheck -c Release   # 46项：HeldItemWire布局、初始清单条件与失败回滚
+dotnet run --project tools/InventorySync.SelfCheck -c Release   # 41项：HeldItemWire布局、三件清单与失败回滚
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 108项：显示同步回归
 ```
 

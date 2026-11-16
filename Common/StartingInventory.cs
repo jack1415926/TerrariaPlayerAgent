@@ -13,18 +13,18 @@ namespace TerrariaPlayerAgent.Common;
 // The actor is published only after this succeeds, so a throw cannot leave a partially initialized AI.
 internal static class StartingInventory
 {
-    internal static Exception? TryApply(Player player, bool collectorsEdition)
+    internal static Exception? TryApply(Player player)
     {
         Item[] backup = (Item[])player.inventory.Clone();
         int previousSelected = player.selectedItem;
         try
         {
-            var vanilla = new List<Item>(4);
-            foreach (StartingKit.Entry entry in StartingKit.ClassicEntries(collectorsEdition))
+            var vanilla = new List<Item>(StartingKit.ClassicItemTypes.Length);
+            foreach (int type in StartingKit.ClassicItemTypes)
             {
                 var item = new Item();
-                item.SetDefaults(entry.Type);
-                if (entry.RollPrefix) item.Prefix(-1);
+                item.SetDefaults(type);
+                item.Prefix(-1);
                 vanilla.Add(item);
             }
             List<Item> items = PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath: false);
