@@ -1,39 +1,44 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using Terraria;
-using Terraria.ID;
 using Terraria.ModLoader;
 
 namespace TerrariaPlayerAgent.Common;
 
-// The vanilla classic starting kit is assigned by
+// The vanilla classic starting kit is composed by
 // Terraria.GameContent.UI.States.UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty
-// in this tML build; new Player() does not run it. PlayerLoader.GetStartingItems is the
-// ModLoader entry point that adds mod starting items on top of a supplied vanilla list.
-// shortcut: this classic list is transcribed from that UI method for tML 2026.08.3.0; re-check it on upgrade.
+// in tML 2026.08.3.0; new Player() does not run it. PlayerLoader.GetStartingItems is the ModLoader
+// extension point and SetStartInventory performs the native slot clearing/placement.
+// The actor is published only after this succeeds, so a throw cannot leave a partially initialized AI.
 internal static class StartingInventory
 {
-    private static readonly int[] ClassicItemTypes =
+    internal static Exception? TryApply(Player player, bool collectorsEdition)
     {
-        ItemID.CopperShortsword, ItemID.CopperPickaxe, ItemID.CopperAxe, ItemID.Carrot
-    };
-
-    internal static void Apply(Player player)
-    {
-        var vanilla = new List<Item>(ClassicItemTypes.Length);
-        foreach (int type in ClassicItemTypes)
+        Item[] backup = (Item[])player.inventory.Clone();
+        int previousSelected = player.selectedItem;
+        try
         {
-            var item = new Item();
-            item.SetDefaults(type);
-            item.Prefix(-1);
-            vanilla.Add(item);
+            var vanilla = new List<Item>(4);
+            foreach (StartingKit.Entry entry in StartingKit.ClassicEntries(collectorsEdition))
+            {
+                var item = new Item();
+                item.SetDefaults(entry.Type);
+                if (entry.RollPrefix) item.Prefix(-1);
+                vanilla.Add(item);
+            }
+            List<Item> items = PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath: false);
+            PlayerLoader.SetStartInventory(player, items);
+            player.selectedItem = 0;
+            return null;
         }
-        List<Item> items = PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath: false);
-        foreach (Item slot in player.inventory)
-            slot.SetDefaults(ItemID.None);
-        for (int i = 0; i < items.Count && i < player.inventory.Length; i++)
-            player.inventory[i] = items[i];
-        player.selectedItem = 0;
+        catch (Exception ex)
+        {
+            // Restore slots even though the caller discards this unpublished player on failure.
+            Array.Copy(backup, player.inventory, backup.Length);
+            player.selectedItem = previousSelected;
+            return ex;
+        }
     }
 
     internal static string Describe(Player player)

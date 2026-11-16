@@ -316,7 +316,8 @@ public sealed class MultiplayerProbe : ModSystem
         else
         {
             item.SetDefaults(held.Type);
-            item.prefix = held.Prefix;
+            // Prefix(int) validates the prefix and applies its stat changes; assigning item.prefix skips both.
+            if (held.Prefix != 0) item.Prefix(held.Prefix);
             item.stack = System.Math.Max((short)1, held.Stack);
         }
         mirror.selectedItem = held.Slot;

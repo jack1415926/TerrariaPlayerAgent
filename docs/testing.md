@@ -27,11 +27,11 @@ python -B -m unittest discover -s agent -p test_run.py -v
 批次3新增的离线回放（无需游戏／API）：
 
 ```powershell
-dotnet run --project tools/InventorySync.SelfCheck -c Release   # 14项：HeldItemWire布局
+dotnet run --project tools/InventorySync.SelfCheck -c Release   # 46项：HeldItemWire布局、初始清单条件与失败回滚
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 108项：显示同步回归
 ```
 
-InventorySync只验证6字节持有物包读写，不验证服务器实际发放、客户端绘制或重生保留；这些仍需实机。
+InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位事务和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。这些仍需实机。
 
 ## 单人历史 smoke 入口
 

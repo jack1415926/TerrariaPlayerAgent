@@ -37,7 +37,7 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱；stop／remove清掉待发目标 |
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
 | Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像、有界平滑和持有物显示；不复制怪物选敌逻辑 |
-| Common/StartingInventory.cs、HeldItemWire.cs | 多人服务器 Spawn 时按经典原生清单经 `PlayerLoader.GetStartingItems` 初始化一次；持有物包字段只用于客户端显示，服务器仍是权威 |
+| Common/StartingInventory.cs、StartingKit.cs、HeldItemWire.cs | 多人服务器 Spawn 时按普通经典三件（Carrot 仅典藏版条件）经 `PlayerLoader.GetStartingItems`／`SetStartInventory` 初始化一次，失败不发布 AI；持有物包字段只用于客户端显示，服务器仍是权威 |
 | Common/MultiplayerAgentBridge.cs | 显式只读／动作开关、目标收发、身份校验、短移动白名单、回执过滤 |
 | Common/MultiplayerGoalAcceptance.cs、agent/acceptance.py | 有界开发验收：真实接单后替换、移动开始后停止、观察60tick；不参与普通决策 |
 | Common/WorldSession.cs | 世界会话标识；进世界生成、退出清空，恢复对账据此拒绝跨世界恢复 |
@@ -69,7 +69,7 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 
-原生PickTile前后记录坐标、工具、类型／存在性和broken。草地变泥土不算移除，移除不算拾取。库存可观察并选择；equip wood／iron／pick只在开发模式发测试物资。批次3已在多人服务器 Spawn 按经典四件初始化一次（`StartingInventory`，待实机），单人历史流程仍不自动发放。木剑／铁阔剑攻击已适配；普通挥动镐可用，斧／锤／钻头等未交付。
+原生PickTile前后记录坐标、工具、类型／存在性和broken。草地变泥土不算移除，移除不算拾取。库存可观察并选择；equip wood／iron／pick只在开发模式发测试物资。批次3已在多人服务器 Spawn 按普通经典三件初始化一次（Carrot 仅 `Main.runningCollectorsEdition` 条件；`StartingInventory`，待实机），初始化失败不发布 AI；单人历史流程仍不自动发放。木剑／铁阔剑攻击已适配；普通挥动镐可用，斧／锤／钻头等未交付。
 
 ## Agent与开发入口
 

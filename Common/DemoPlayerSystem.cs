@@ -72,24 +72,24 @@ public sealed class DemoPlayerSystem : ModSystem
             shoeColor = new Color(70, 65, 55)
         };
         actor.fallStart = actor.fallStart2 = (int)(actor.position.Y / 16);
+        if (Main.netMode == NetmodeID.Server)
+        {
+            // Initialize before publishing the actor: a failure leaves the slot, controller and generation untouched.
+            if (StartingInventory.TryApply(actor, Main.runningCollectorsEdition) is { } failure)
+            {
+                Mod.Logger.Error($"[TPA] starting inventory failed; AI not spawned: {failure}");
+                return $"Spawn failed: starting inventory initialization failed ({failure.GetType().Name}); " +
+                    "AI was not spawned. See the server log.";
+            }
+            Mod.Logger.Info($"[TPA] starting inventory: collectorsEdition={Main.runningCollectorsEdition}; " +
+                StartingInventory.Describe(actor));
+        }
         previousSlot = Main.player[slot];
         Actor = actor;
         navigation.Clear();
         ModContent.GetInstance<NativeMining>().Reset();
         Main.player[slot] = actor;
         ActorGeneration++;
-        if (Main.netMode == NetmodeID.Server)
-        {
-            try
-            {
-                StartingInventory.Apply(actor);
-                Mod.Logger.Info($"[TPA] starting inventory: {StartingInventory.Describe(actor)}");
-            }
-            catch (Exception ex)
-            {
-                Mod.Logger.Error($"[TPA] starting inventory failed: {ex}");
-            }
-        }
         totalUpdates = 0;
         lastUpdates = 0;
         autoJumpCount = 0;

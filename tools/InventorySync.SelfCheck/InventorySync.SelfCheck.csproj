@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <Compile Include="..\..\Common\HeldItemWire.cs" Link="HeldItemWire.cs" />
+    <Compile Include="..\..\Common\StartingKit.cs" Link="StartingKit.cs" />
+    <Compile Include="..\..\Common\StartingInventory.cs" Link="StartingInventory.cs" />
   </ItemGroup>
 
 </Project>

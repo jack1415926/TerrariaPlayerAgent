@@ -17,7 +17,7 @@
 | 第二客户端、控制归属、离线与槽位冲突 | 待验 | 代码保护不等于实机；房主退出关服不证明存活服务器清理 |
 | 多人接触受伤／死亡／软核重生 | 通过本轮场景 | 自然受伤／死亡／重生后再次受伤有日志；用户选敌反馈正常，无独立选敌根因证明 |
 | 多人中文短目标／反馈／替换／停止 | 通过 | 两个真实模型目标完成；自动 A→B→stop 通过，60tick输入不恢复 |
-| 多人初始装备与持有物显示（批次3） | 离线实现，游戏待验 | 服务器 Spawn 经典四件经 `GetStartingItems` 初始化一次；客户端只显示选中槽；14项回放通过；未实机 |
+| 多人初始装备与持有物显示（批次3） | 离线实现，游戏待验 | 服务器 Spawn 按普通经典三件经 `GetStartingItems` 初始化一次，Carrot 仅 `Main.runningCollectorsEdition` 为真时追加；初始化失败不发布 AI；客户端只显示选中槽；46项回放通过；未实机 |
 | 正常装备下的多人攻击／挖掘／拾取／保存 | 未交付 | 单人攻击与挖掘不能当作多人能力；测试发物资不能作为正常成长 |
 | 单人历史基线 | 见 [阶段报告](milestone-acceptance.md) | 原生木剑／铁阔剑攻击、铜镐挖掘、goto／home 有阶段性实测；不能直接当作多人能力 |
 
@@ -28,7 +28,7 @@
 | 状态 | 含义 |
 | --- | --- |
 | Python离线通过 | 仓库内 `test_run.py` 当前71项，使用 FakeGame、临时邮箱及宿主同步保护，不启动游戏 |
-| 持有物回放 | `tools/InventorySync.SelfCheck` 14项，只验证6字节包布局与截断，不验证发放／绘制 |
+| 持有物回放 | `tools/InventorySync.SelfCheck` 46项，验证6字节包布局、Carrot 条件、失败回滚与单一调用点；不验证发放／绘制 |
 | 显示回放 | `tools/DisplaySync.SelfCheck` 108项，纯逻辑回放，不证明画面 |
 | 本机DLL检查 | 43项在被忽略的 `.local/research/BridgeCheck` 读取实际模组DLL，用手工构造状态检查协议／门控；不是完整游戏模拟或可移植CI套件 |
 | C# 构建通过 | `scripts/build.ps1` 能编译打包；只证明编译，不证明游戏内行为 |
@@ -43,9 +43,9 @@
 | --- | --- | --- |
 | 1 只读桥／Probe | 服务器仅 Server(2) 消费、只接受 status；Host&Play 2026-11-13 通过；主菜单不消费多人请求 | 远程独立服务器未验；过期快照与 `agentMode` 不匹配会被 Python 拒绝 |
 | 2 中文短目标 | `/tpamp goal` 由生成者控制；真实模型左右短移动、替换、stop、自动 A→B→stop 通过；60tick输入不恢复 | 仅左右移动和停止，每次≤3秒；第二真人、真实断线重连未验 |
-| 3 初始装备／持有物显示 | 服务器 Spawn 按经典四件初始化一次；`Snapshot` 可观察 inventory／selectedSlot／item；客户端包尾只同步选中槽；Stop／目标替换／status／重生不重复发放 | 离线实现，未实机；客户端只显示一件，不是完整背包同步；单人历史流程仍用 `equip` 开发物资 |
+| 3 初始装备／持有物显示 | 服务器 Spawn 按普通经典三件初始化一次（Carrot 仅典藏版条件）；`Snapshot` 可观察 inventory／selectedSlot／item；客户端包尾只同步选中槽；Stop／目标替换／status／重生不重复发放；初始化失败不发布 AI | 离线实现，未实机；客户端只显示一件，不是完整背包同步；单人历史流程仍用 `equip` 开发物资 |
 
-批次3的原生依据：`new Player()` 不初始化物品；普通新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 按难度写入，经典四件为 CopperShortsword／CopperPickaxe／CopperAxe／Carrot（ItemID 3507／3509／3506／603），并经公开 `PlayerLoader.GetStartingItems` 触发模组扩展点。清单按当前 tML 版本转录，升级需重核。详见 [多人探针](multiplayer-probe.md)。
+批次3的原生依据：`new Player()` 不初始化物品；普通新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 按难度写入，普通经典三件为 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506），均调用 `Prefix(-1)`；Carrot（603）只在 `Main.runningCollectorsEdition` 为真时追加，且不调用 `Prefix`。清单经公开 `PlayerLoader.GetStartingItems` 接入模组扩展点，并由 `PlayerLoader.SetStartInventory` 放置槽位。清单按当前 tML 版本转录，升级需重核。详见 [多人探针](multiplayer-probe.md)。
 
 ## 显示同步
 
@@ -56,7 +56,7 @@
 | stale 后恢复：限速收敛、不瞬间回退、连续断线有界 | 是（108项回放） | 是（仅编译） | 不涉及 | 恢复瞬间的观感 |
 | 瞬移／重生识别：服务器显式标记优先，断流不被误判 | 是（108项回放） | 是（仅编译） | 不涉及 | 真实重生／传送的位置变化 |
 | 移除／重建／退世界清理显示缓冲 | 是（回放 + 重置路径） | 是 | 不涉及 | 本轮移除重建／重进无残留通过；第二客户端待验 |
-| 持有物包字段（slot／type／prefix／stack） | 是（14项回放） | 是 | 不涉及 | AI 手持显示、换槽与镜像重建 |
+| 持有物包字段（slot／type／prefix／stack） | 是（46项回放） | 是 | 不涉及 | AI 手持显示、换槽与镜像重建 |
 
 ## 单人历史基线（保留范围）
 
