@@ -18,6 +18,29 @@
 
 最近一轮（2026-11-16）：71项 Python 检查通过，新增14项持有物布局回放、108项既有显示同步回放通过，构建0警告0错误；43项本机临时 DLL 检查仍只作协议／门控参考。批次3的初始装备与客户端显示尚未实机，不能写成游戏内已通过。43项 DLL 检查不是仓库内可直接复跑的 CI 套件，范围与报告见 [集中清单](docs/acceptance-checklist.md) 和 [验证记录](docs/validation.md)。
 
+## 项目结构
+
+```text
+TerrariaPlayerAgent/
+├─ TerrariaPlayerAgent.csproj / .cs   模组工程与 Mod 入口
+├─ build.txt / description.txt        tModLoader 打包与展示信息
+├─ Commands/                          /tpa 单人命令、/tpamp 多人命令
+├─ Common/                            C# 核心：AI 生命周期、移动/挖掘/战斗、
+│                                     多人桥接、显示同步、初始装备与探针
+├─ Localization/                      英文文本
+├─ agent/                             Python 手写宿主：模型循环、提示词、测试
+├─ scripts/                           build / play / run-agent / smoke / 验收脚本
+├─ tools/                             离线自检：DisplaySync、InventorySync
+├─ docs/                              设计、运行、协议、验收与历史记录
+├─ .env.example                       API 环境变量模板（不含凭据）
+├─ TODO.md                            当前计划与下一步边界
+└─ README.md
+```
+
+主要 C# 文件：`Common/DemoPlayerSystem.cs` 负责 AI 槽位、生命周期与状态快照；`Common/MultiplayerProbe.cs` 负责真人控制归属、命令包与客户端镜像；`Common/MultiplayerAgentBridge.cs` 负责服务器目标邮箱与身份校验；`Common/DisplaySync.cs` 负责显示平滑；`Common/StartingInventory.cs` 负责多人服务器初始装备。Python 入口是 `agent/run.py`，离线测试是 `agent/test_run.py`；`scripts/play.ps1 -MultiplayerAgent` 启动多人开发环境，`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server` 启动宿主。
+
+`.local/` 是本地测试配置、构建产物、报告与临时文件，已被 Git 忽略，不属于仓库结构。
+
 ## 开始体验多人短目标
 
 先按 [新电脑接续](docs/new-machine-setup.md) 准备游戏、.NET 和自己的 `.env`；API 配置见 [Agent说明](docs/agent-setup.md)。PowerShell 7：
