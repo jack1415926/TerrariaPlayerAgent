@@ -26,6 +26,9 @@ public sealed class MultiplayerProbe : ModSystem
     internal int ControllerSlot => ControllerValid ? controller : -1;
     internal string? ControllerToken => ControllerValid ? controllerToken : null;
     private Player? mirror, previous;
+    private int mirrorItemSlot = -1;
+    private HeldItemWire mirrorHeld;
+    private bool hasMirrorHeld;
     private readonly DisplaySync display = new();
     private uint stateSequence;
     private Vector2 lastSentPosition;
@@ -178,6 +181,7 @@ public sealed class MultiplayerProbe : ModSystem
             uint sequence = reader.ReadUInt32();
             long serverTick = reader.ReadInt64();
             byte flags = reader.ReadByte();
+            HeldItemWire held = HeldItemWire.Read(reader);
             if (slot < 0 || slot >= Main.maxPlayers || slot == Main.myPlayer) return;
             if (mirrorSlot != slot) ClearMirror();
             if (mirror == null)
@@ -199,6 +203,7 @@ public sealed class MultiplayerProbe : ModSystem
             });
             mirror.direction = direction; mirror.team = team;
             mirror.statLife = life; mirror.dead = life <= 0;
+            ApplyHeldItem(held);
         }
         else if (Main.netMode == NetmodeID.MultiplayerClient && kind == ReplyKind)
             Main.NewText(reader.ReadString(), Color.LightBlue);
@@ -288,9 +293,36 @@ public sealed class MultiplayerProbe : ModSystem
             packet.Write(stateSequence++);
             packet.Write((long)Main.GameUpdateCount);
             packet.Write((byte)(teleported ? 1 : 0));
+            Item held = actor.HeldItem;
+            new HeldItemWire(actor.selectedItem, held.type, held.prefix, held.stack).Write(packet);
         }
         else hasSentPosition = false;
         packet.Send();
+    }
+
+    // The mirror only carries the displayed held item; the server remains authoritative.
+    private void ApplyHeldItem(HeldItemWire held)
+    {
+        if (mirror == null || held.Slot >= mirror.inventory.Length) return;
+        if (hasMirrorHeld && mirrorHeld.Slot == held.Slot && mirrorHeld.Type == held.Type &&
+            mirrorHeld.Prefix == held.Prefix && mirrorHeld.Stack == held.Stack) return;
+        if (mirrorItemSlot >= 0 && mirrorItemSlot != held.Slot && mirrorItemSlot < mirror.inventory.Length)
+            mirror.inventory[mirrorItemSlot].SetDefaults(ItemID.None);
+        Item item = mirror.inventory[held.Slot];
+        if (held.Type <= 0)
+        {
+            item.SetDefaults(ItemID.None);
+        }
+        else
+        {
+            item.SetDefaults(held.Type);
+            item.prefix = held.Prefix;
+            item.stack = System.Math.Max((short)1, held.Stack);
+        }
+        mirror.selectedItem = held.Slot;
+        mirrorItemSlot = held.Slot;
+        mirrorHeld = held;
+        hasMirrorHeld = true;
     }
 
     private void ClearMirror()
@@ -302,6 +334,8 @@ public sealed class MultiplayerProbe : ModSystem
             if (previous != null) Main.player[mirrorSlot] = previous;
         }
         mirror = previous = null; mirrorSlot = -1;
+        mirrorItemSlot = -1;
+        hasMirrorHeld = false;
     }
 
     public override void OnWorldUnload()

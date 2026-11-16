@@ -78,6 +78,18 @@ public sealed class DemoPlayerSystem : ModSystem
         ModContent.GetInstance<NativeMining>().Reset();
         Main.player[slot] = actor;
         ActorGeneration++;
+        if (Main.netMode == NetmodeID.Server)
+        {
+            try
+            {
+                StartingInventory.Apply(actor);
+                Mod.Logger.Info($"[TPA] starting inventory: {StartingInventory.Describe(actor)}");
+            }
+            catch (Exception ex)
+            {
+                Mod.Logger.Error($"[TPA] starting inventory failed: {ex}");
+            }
+        }
         totalUpdates = 0;
         lastUpdates = 0;
         autoJumpCount = 0;
@@ -437,7 +449,8 @@ public sealed class DemoPlayerSystem : ModSystem
                 contactDamage = n.damage, touching = n.Hitbox.Intersects(Actor.Hitbox) }).ToArray(),
         inventory = Actor.inventory.Take(50).Select((item, slot) => new { slot, item })
             .Where(entry => !entry.item.IsAir).Select(entry => new { entry.slot, type = entry.item.type,
-                name = entry.item.Name, stack = entry.item.stack, pick = entry.item.pick, shoot = entry.item.shoot }).ToArray(),
+                name = entry.item.Name, stack = entry.item.stack, prefix = entry.item.prefix,
+                pick = entry.item.pick, shoot = entry.item.shoot }).ToArray(),
         direction = Actor.direction, item = Actor.HeldItem.type,
         itemAnimation = Actor.itemAnimation, usingItem = Actor.controlUseItem,
         hitCount, hurtCount, deathCount, respawnCount,

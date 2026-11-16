@@ -145,3 +145,11 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 报告在 `.local/test-results/acceptance-<id>.json`，服务器原件在邮箱中。失败、死亡或世界变化保留失败证据，不盲目重跑。服务器测试入口与目标动作一样依赖显式 `TPA_MP_AGENT=1`，只读模式不可调用。新增验收协调逻辑也已通过3项真实 DLL 检查，服务器针对性检查合计43项。
 
 2026-11-13 实机报告 `.local/test-results/acceptance-85ea8609a8c1425ba919cce4601b81f6.json` 为passed：A接单后以新版本替换B，B左移输入开始后立即停止，两个结果均interrupted，之后60tick输入未恢复。末次测试默认加载两个辅助模组；具体白天／禁刷怪开关未说明，不推断已生效。收尾报告 `.local/test-results/goal-closeout-1364583f.json` 为AI生命100、存活、无目标／主动输入，宿主心跳已删除。这些是验收时点，不是实时服务状态。
+
+## 起始装备与持有物同步（批次 3，2026-11-16）
+
+- 原生依据（tML 2026.08.3.0 程序集）：`new Player()` 的构造不发放物品；正常新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty`（私有、UI 入口）按难度写入初始物品，经典角色的物品是 CopperShortsword／CopperPickaxe／CopperAxe／Carrot（ItemID 3507／3509／3506／603），随后通过公开的 `PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath)` 触发生成扩展点 `ModPlayer.AddStartingItems`／`ModifyStartingInventory`。`Player.DropItems_GetDefaults` 是 mediumcore 掉落用的铜制三件，本次未采用。
+- 实现：`Common/StartingInventory.cs` 用上述原生清单与 `PlayerLoader.GetStartingItems`，只在**多人服务器**（`Main.netMode == Server`）的 `DemoPlayerSystem.Spawn` 成功后调用一次；单人历史测试流程保持原样；清空空库存、按顺序写入、`selectedItem=0`。Stop、目标替换、status、死亡和 `NativeCombat` 的原生重生都不再调用。经典清单是当前版本的转录，tML 升级需重核。
+- 客户端：`StateKind` 在包尾追加 `HeldItemWire`（selected slot、type、prefix、stack）；客户端只更新镜像选中槽的显示物品，服务器仍是权威；换槽清旧槽，镜像重建后由下一包恢复。不改真人背包，不复制完整背包同步。
+- 离线证据：`tools/InventorySync.SelfCheck` 14 项通过（6 字节布局、典型／边界槽位、air、截断拒绝）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。
+- 实机待验：经典新角色与 AI 初始物品逐项对照；客户端手持物显示；stop／目标替换／一次原生重生后不重复发放；客户端重建镜像不产生额外物品；其他模组 `AddStartingItems` 是否给 AI 额外物品。
