@@ -66,7 +66,7 @@
 - 第二次死亡 tick=10489，计时 600；client.log 在 22:13:35 记录移除。仅补查最后一项：tick=14631 时 actor=null，已超过原应重生的 tick=11089，确认没有自行出现。补充报告 `.local/test-results/respawn-cancellation-20261021.json`。本批 12 项行为由主报告与该补充共同覆盖，没有再重跑前 11 项；脚本末项也改为等模拟 tick，避免将暂停中的墙钟等待当作计时已经经过。
 - 首轮白天僵尸走开，未形成死亡，改为测试中的 AI 主动走向敌人保持接触；未改 NPC 行为。另修复脚本局部变量与 Respawn 开关参数的 PowerShell 大小写冲突。这两项属于测试脚本问题，不是自动重生产品缺陷。
 
-当前支持普通／软核 AI；保留同一对象背包，未实现 AI 初始装备、铜短剑攻击、床设置、存档或中核／硬核策略。退出世界继续复用已有 Remove 清理，没有独立待重生队列，本批未另外做退出重进实测。测试角色及测试生成的敌人已清理。
+当前支持普通／软核 AI；保留同一对象背包，未实现 AI 初始装备、铜短剑攻击、床设置、存档或中核／硬核策略。退出世界继续复用已有 Remove 清理，没有独立待重生队列，本批未另外做退出重进实测。测试角色及测试生成的敌人已清理。（2026-11-16 批次3已在多人服务器接入初始装备，见本页末；本段保持当时单人结论。）
 
 ## 移动跨坎反馈修复（2026-10-21 22:21）
 
@@ -266,3 +266,11 @@ AI保留，主动输入已停止，自动重生仍默认开启。通用矿石强
 - 开发反思增加本轮实际绕路：真人抢时序导致自动验收后补及重载；绕过既定启动器遇血月干扰后再恢复辅助模组；Host & Play参数不继承；观察压缩丢失身份；时间戳遗留判断不稳定；主菜单过渡与辅助工具失败误判；把索敌与接触伤害混为一谈；只追加状态造成文档冲突。分别记录证据、影响和下一次做法，不编造独立选敌根因。
 - 下一小批规划为“正常新角色起步装备与可观察同步”，先核原生物品来源／扩展入口，验证任务切换和死亡重生不重复发放，再安排正常装备下的多人原生攻击。规划未实施，不将铜短剑或背包同步提前标为已支持。第一版仍必须包含战斗、遵守正常成长，暂不扩全武器／拾取合成／第二真人／框架迁移。
 - 文档检查只核本地链接、围栏闭合、旧当前状态冲突与git diff --check；本次文档检查结果见本轮交付，不新增游戏或API验收结论。
+
+## 2026-11-16 批次3初始装备与持有物同步（离线）
+
+- 程序集核对（tML 2026.08.3.0）：`new Player()` 构造函数不发放初始物品；普通新角色在 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 中按难度写入，经典四件为 CopperShortsword／CopperPickaxe／CopperAxe／Carrot（3507／3509／3506／603）；公开的 `PlayerLoader.GetStartingItems` 是 `ModPlayer.AddStartingItems`／`ModifyStartingInventory` 的扩展入口。`Player.DropItems_GetDefaults` 只给 mediumcore 铜制三件，本批未用。
+- 实现：新增 `Common/StartingInventory.cs`，仅多人服务器 `DemoPlayerSystem.Spawn` 成功后调用一次，清空库存、按经典顺序写入并 `selectedItem=0`；Stop、目标替换、status、死亡与原生重生不复用该路径。`Snapshot()` 库存项新增 `prefix`。
+- 客户端：`HeldItemWire`（slot／type／prefix／stack）追加在 StateKind 包尾；镜像只更新选中槽显示物品，换槽清旧槽，收到相同值不重复 `SetDefaults`；不改真人背包，不复制完整背包同步。
+- 检查：`tools/InventorySync.SelfCheck` 14项通过；71项 Python 通过；DisplaySync 108项回归通过；C# 构建0警告0错误，`.tmod` 130.0 KB。未启动游戏、未调用真实模型／API。
+- 未验收：普通经典新角色与 AI 初始物品逐项对照、客户端实际手持显示、Stop／替换／一次原生重生后不重复发放、镜像重建、其他模组 `AddStartingItems` 的影响。单人历史流程未改，仍用 `equip wood/pick` 开发物资。

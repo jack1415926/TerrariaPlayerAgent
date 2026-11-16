@@ -1,5 +1,7 @@
 # Terraria AI Companion 技术需求说明书
 
+> 历史需求文档（V0.1 技术预研），不是当前实现状态。当前能力与交接见 [README](../README.md)、[TODO](../TODO.md) 和 [集中实测清单](acceptance-checklist.md)。
+
 版本：V0.1（技术预研版）
 目标平台：Terraria / tModLoader
 项目类型：基于大语言模型的自主游戏智能体

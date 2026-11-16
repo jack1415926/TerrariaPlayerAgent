@@ -1,6 +1,6 @@
 # 本地自动测试与 Enter 诊断
 
-包版本：0.1.1；文档更新：2026-11-13。当前多人入口见下方；后面的单人 smoke／战斗／Enter调查为历史工具，不适用于多人目标验收。证据状态统一见 [集中清单](acceptance-checklist.md)，文档整理不重新执行测试。
+包版本：0.1.1；文档更新：2026-11-16。当前多人入口见下方；单人 smoke／战斗／Enter调查为历史工具，不适用于多人目标验收。证据状态统一见 [集中清单](acceptance-checklist.md)，文档整理不重新执行测试。
 
 ## 当前多人短目标验收
 
@@ -22,7 +22,16 @@ $env:TPA_TEST_MAILBOX = "$PWD\.local\test-mailbox"
 python -B -m unittest discover -s agent -p test_run.py -v
 ```
 
-11月13日71项通过；43项DLL检查在本机被忽略的辅助目录中，依赖本机游戏与手工构造状态，并不是公开可复跑的CI套件。单人图形碰撞隔离检查曾因字体未初始化失败，不以资格门控检查代替完整单人游戏回归。再次确有需要时只提取必要、可参数化的小检查，不先搭测试框架。
+2026-11-16 仓库内共71项通过；43项DLL检查在本机被忽略的辅助目录中，依赖本机游戏与手工构造状态，并不是公开可复跑的CI套件。单人图形碰撞隔离检查曾因字体未初始化失败，不以资格门控检查代替完整单人游戏回归。再次确有需要时只提取必要、可参数化的小检查，不先搭测试框架。
+
+批次3新增的离线回放（无需游戏／API）：
+
+```powershell
+dotnet run --project tools/InventorySync.SelfCheck -c Release   # 14项：HeldItemWire布局
+dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 108项：显示同步回归
+```
+
+InventorySync只验证6字节持有物包读写，不验证服务器实际发放、客户端绘制或重生保留；这些仍需实机。
 
 ## 单人历史 smoke 入口
 
