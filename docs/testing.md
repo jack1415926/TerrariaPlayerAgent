@@ -29,12 +29,12 @@ python -B -m unittest discover -s agent -p test_run.py -v
 ```powershell
 dotnet run --project tools/InventorySync.SelfCheck -c Release   # 37项：HeldItemWire布局、三件清单与失败处理
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 110项：显示同步回归
-dotnet run --project tools/Combat.SelfCheck -c Release         # 47项：攻击命令、身份策略与生命周期调用点
+dotnet run --project tools/Combat.SelfCheck -c Release         # 60项：攻击命令、身份策略与生命周期调用点
 ```
 
 InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位放置和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。
 
-CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验，并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查；它不加载tModLoader，不执行IL钩子，也不证明原生projectile或近战命中真的发生。
+CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验、`TPA_MP_TEST_EQUIP` 服务端开关的前置拒绝，以及 `projectile-hit` 的 `heldItemAtHit`／`projectileOwner` 字段语义；并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查。它不加载tModLoader，不执行IL钩子，也不证明原生projectile或近战命中真的发生。
 
 批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑刺击、批次5的 Iron Broadsword 普通挥砍都尚未实机；自检只覆盖命令、策略和源码调用契约，不能代替引擎执行。
 

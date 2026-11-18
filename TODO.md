@@ -18,8 +18,8 @@
 | 服务器只读桥与世界／AI 身份变化 | Host & Play 实机通过；远程独立服务器未验 |
 | 中文短目标、反馈、替换与停止 | 真实模型／用户确认；自动验收 A→B→stop 后60tick输入未恢复 |
 | 多人初始装备与持有物显示（批次3，离线） | 服务器 Spawn 按普通经典三件经 `GetStartingItems` 初始化一次；失败不发布 AI；客户端显示选中槽持有物；37项回放通过；未实机 |
-| 多人铜短剑手动攻击（批次4，离线） | `/tpamp attack left/right [1]` 经服务器身份、槽位与物品校验后设置原生攻击输入；服务端记录输入和原生 projectile 命中；47项自检通过；未实机 |
-| 多人普通近战挥砍（批次5，离线） | `/tpamp equip iron` 隔离测试物资 + `/tpamp attack left/right [1]`；Iron Broadsword 走原生直接近战门控；`item-hit` 记录；47项自检通过；未实机 |
+| 多人铜短剑手动攻击（批次4，离线） | `/tpamp attack left/right [1]` 经服务器身份、槽位与物品校验后设置原生攻击输入；服务端记录输入和原生 projectile 命中；60项自检通过；未实机 |
+| 多人普通近战挥砍（批次5，离线） | `/tpamp equip iron`（需服务端 `TPA_MP_TEST_EQUIP=1` 的隔离测试物资）+ `/tpamp attack left/right [1]`；Iron Broadsword 走原生直接近战门控；`item-hit` 记录；60项自检通过；未实机 |
 | 取消、连接与宿主身份保护 | 71项 Python、43项本机临时 DLL 检查；不能据此宣称真实第二真人／断线重连已通过 |
 
 目前多人动作已有左右短移动、停止、受限的铜短剑攻击，以及隔离测试物资下的 Iron Broadsword 普通挥砍（均离线，待实机）；批次3／4／5的实机验收都尚未完成。单人历史攻击／挖掘不能直接当作多人能力，Python 尚未开放攻击。
@@ -50,13 +50,13 @@
 - [x] 复用 `combatEvents` 记录 `attack-input` 和 `projectile-hit`；不修改 `NPC.life`、不伪造命中，不开放 Python attack。
 - [ ] 实机验证铜短剑动画、原生 projectile 命中、实际伤害、Stop／替换／重生清理，以及真人攻击不受影响。
 
-2026-11-18 离线实现：`NativeCombat` 增加 `ItemCheck_Shoot` 归属适配，`MultiplayerProbe` 增加受限攻击请求，`CombatHitProbe` 记录服务端 projectile 命中；`tools/Combat.SelfCheck` 47 项通过。第三批初始装备实机状态保持未勾选，等待同一次个人电脑验收。
+2026-11-18 离线实现：`NativeCombat` 增加 `ItemCheck_Shoot` 归属适配，`MultiplayerProbe` 增加受限攻击请求，`CombatHitProbe` 记录服务端 projectile 命中；`tools/Combat.SelfCheck` 60 项通过。第三批初始装备实机状态保持未勾选，等待同一次个人电脑验收。
 
 ## 批次5：原生武器机制研究与普通近战（离线完成，待实机）
 
 - [x] 核对原生武器共用主流程、客户端身份门控、射弹 owner、近战命中框和资源消耗路径；结论见 `docs/game-mechanics.md`。
 - [x] 复用 `DemoPlayerSystem.Attack`、`IsAuthoritativeActor`、Stop／目标替换清理和 `combatEvents`；未建立 WeaponAdapter／Registry。
-- [x] 以 Iron Broadsword 作为代表性普通挥砍，经隔离测试物资 `/tpamp equip iron` 准备；服务器只放行 `ItemCheck_Inner` 与 `ItemCheck_OwnerOnlyCode` 的必要直接近战分支。
+- [x] 以 Iron Broadsword 作为代表性普通挥砍，经隔离测试物资 `/tpamp equip iron` 准备；服务器先检查 `TPA_MP_TEST_EQUIP=1`（默认关闭），再放行 `ItemCheck_Inner` 与 `ItemCheck_OwnerOnlyCode` 的必要直接近战分支。
 - [x] 保留批次4铜短剑射弹门控和 `projectile-hit`，新增普通近战 `item-hit` 区分；客户镜像和真人 Player 不放行。
 - [ ] 实机验证 dedServ 近战命中框、原生命中事件、实际伤害，以及从 Iron Broadsword 切回铜短剑的路径。
 

@@ -152,7 +152,9 @@ public sealed class MultiplayerProbe : ModSystem
             }
             else if (action == "equip_iron")
             {
-                if (!ControllerValid || controller != sender)
+                if (!MultiplayerTestEquipPolicy.Enabled)
+                    reply = MultiplayerTestEquipPolicy.DisabledMessage;
+                else if (!ControllerValid || controller != sender)
                     reply = "Only the current AI controller can equip the test weapon.";
                 else if (Demo.Actor == null || Demo.Actor.dead)
                     reply = "No living AI. Spawn one or wait for automatic respawn.";

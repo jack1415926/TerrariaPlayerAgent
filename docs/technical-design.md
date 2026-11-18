@@ -66,7 +66,7 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## 原生物品与结果
 
-批次4已离线适配服务器权威 AI 的铜短剑刺击 projectile（`useStyle 13`／`shoot 938`，经 `ItemCheck_Shoot`）；批次5以 Iron Broadsword 为代表，离线放行 `ItemCheck_OwnerOnlyCode` 的直接近战分支，并用 `/tpamp equip iron` 隔离测试物资准备武器。专用服务器 `ItemCheck_GetMeleeHitbox` 使用简化的 `itemLocation` 命中框，实际命中仍待实机。木剑／铁阔剑的本地单路径保留；接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
+批次4已离线适配服务器权威 AI 的铜短剑刺击 projectile（`useStyle 13`／`shoot 938`，经 `ItemCheck_Shoot`）；批次5以 Iron Broadsword 为代表，离线放行 `ItemCheck_OwnerOnlyCode` 的直接近战分支，并用 `/tpamp equip iron` 隔离测试物资准备武器（服务端必须开启 `TPA_MP_TEST_EQUIP=1`，默认关闭）。专用服务器 `ItemCheck_GetMeleeHitbox` 使用简化的 `itemLocation` 命中框，实际命中仍待实机。木剑／铁阔剑的本地单路径保留；接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 

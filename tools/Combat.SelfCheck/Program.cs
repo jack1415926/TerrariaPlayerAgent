@@ -14,6 +14,7 @@ internal static class Program
     {
         CheckCommandParsing();
         CheckDirectionsAndValidation();
+        CheckTestEquipGate();
         CheckDemoLifecycleContracts();
         CheckProbeAndNativeContracts();
 
@@ -76,6 +77,52 @@ internal static class Program
             MultiplayerAttackPolicy.Validate(true, true, true, true, StartingKit.CopperShortsword, 1, 2) != null);
     }
 
+    private static void CheckTestEquipGate()
+    {
+        string name = MultiplayerTestEquipPolicy.EnvironmentVariable;
+        string? previous = Environment.GetEnvironmentVariable(name);
+        try
+        {
+            Environment.SetEnvironmentVariable(name, null);
+            Check("test equipment defaults off", !MultiplayerTestEquipPolicy.Enabled);
+            Environment.SetEnvironmentVariable(name, "0");
+            Check("test equipment is off for value 0", !MultiplayerTestEquipPolicy.Enabled);
+            Environment.SetEnvironmentVariable(name, "1");
+            Check("test equipment is on only for value 1", MultiplayerTestEquipPolicy.Enabled);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, previous);
+        }
+
+        string? root = FindRepoRoot();
+        Check("repository root is reachable for the test gate", root != null);
+        if (root == null) return;
+
+        string probe = File.ReadAllText(Path.Combine(root, "Common", "MultiplayerProbe.cs"));
+        int start = probe.IndexOf("action == \"equip_iron\"", StringComparison.Ordinal);
+        int end = start < 0 ? -1 : probe.IndexOf("else if (action is \"attack_left\"", start, StringComparison.Ordinal);
+        string section = start >= 0 && end > start ? probe[start..end] : "";
+        int gate = section.IndexOf("MultiplayerTestEquipPolicy.Enabled", StringComparison.Ordinal);
+        int cancel = section.IndexOf("CancelGoal();", StringComparison.Ordinal);
+        int equip = section.IndexOf("Demo.Equip(\"iron\")", StringComparison.Ordinal);
+        Check("server rejects equip before controller or inventory work", gate >= 0 && gate < cancel && gate < equip);
+        Check("disabled equip uses the explicit server message",
+            section.Contains("MultiplayerTestEquipPolicy.DisabledMessage", StringComparison.Ordinal));
+
+        string command = File.ReadAllText(Path.Combine(root, "Commands", "MultiplayerProbeCommand.cs"));
+        Check("client command does not read the server test flag",
+            !command.Contains("TPA_MP_TEST_EQUIP", StringComparison.Ordinal));
+        string play = File.ReadAllText(Path.Combine(root, "scripts", "play.ps1"));
+        Check("play.ps1 exposes an explicit test-equip switch",
+            play.Contains("[switch]$MultiplayerTestEquip", StringComparison.Ordinal));
+        int condition = play.IndexOf("if ($MultiplayerTestEquip)", StringComparison.Ordinal);
+        int environment = play.IndexOf("TPA_MP_TEST_EQUIP", StringComparison.Ordinal);
+        Check("play.ps1 enables test equip only under its switch", condition >= 0 && environment > condition);
+        Check("normal MultiplayerAgent alone does not enable test equip",
+            !play.Contains("if ($MultiplayerAgent) { $environment.TPA_MP_TEST_EQUIP", StringComparison.Ordinal));
+    }
+
     private static void CheckDemoLifecycleContracts()
     {
         string? root = FindRepoRoot();
@@ -108,6 +155,18 @@ internal static class Program
         string itemHit = MethodBody(demo, "public override void OnHitNPCWithItem(Item item, NPC target, NPC.HitInfo hit, int damageDone)");
         Check("item hit recording uses the authoritative actor check",
             itemHit.Contains("NativeCombat.IsAuthoritativeActor(Player)", StringComparison.Ordinal));
+
+        string projectileHit = MethodBody(demo, "internal void RecordProjectileHit(Projectile projectile, NPC npc, int damage)");
+        Check("projectile hit records the held item at hit, not as source",
+            projectileHit.Contains("heldItemAtHit = Actor.HeldItem.type", StringComparison.Ordinal) &&
+            !projectileHit.Contains("item = Actor.HeldItem.type", StringComparison.Ordinal));
+        Check("projectile hit records owner and projectile type",
+            projectileHit.Contains("projectileOwner = projectile.owner", StringComparison.Ordinal) &&
+            projectileHit.Contains("projectile = projectile.type", StringComparison.Ordinal));
+        Check("attack input, item hit and projectile hit remain distinct events",
+            demo.Contains("kind = \"attack-input\"", StringComparison.Ordinal) &&
+            demo.Contains("kind = \"item-hit\"", StringComparison.Ordinal) &&
+            demo.Contains("kind = \"projectile-hit\"", StringComparison.Ordinal));
     }
 
     private static void CheckProbeAndNativeContracts()

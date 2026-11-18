@@ -251,8 +251,10 @@ public sealed class DemoPlayerSystem : ModSystem
     {
         if (Actor == null) return;
         hitCount++;
+        // The projectile may outlive the weapon that spawned it; do not claim the current held item is the source.
         RecordCombat(new { kind = "projectile-hit", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
-            item = Actor.HeldItem.type, projectile = projectile.type, npc = npc.whoAmI, npcType = npc.type,
+            projectileOwner = projectile.owner, projectile = projectile.type,
+            heldItemAtHit = Actor.HeldItem.type, npc = npc.whoAmI, npcType = npc.type,
             damage, targetLifeAfter = npc.life });
     }
 

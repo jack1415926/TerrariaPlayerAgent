@@ -18,8 +18,8 @@
 | 多人接触受伤／死亡／软核重生 | 通过本轮场景 | 自然受伤／死亡／重生后再次受伤有日志；用户选敌反馈正常，无独立选敌根因证明 |
 | 多人中文短目标／反馈／替换／停止 | 通过 | 两个真实模型目标完成；自动 A→B→stop 通过，60tick输入不恢复 |
 | 多人初始装备与持有物显示（批次3） | 离线实现，游戏待验 | 服务器 Spawn 按普通经典三件经 `GetStartingItems` 初始化一次；初始化失败不发布 AI；客户端只显示选中槽；37项回放通过；未实机 |
-| 多人铜短剑手动攻击（批次4） | 离线实现，游戏待验 | `/tpamp attack left/right [1]` 经控制者／槽位／物品校验后产生原生刺击 projectile；服务端记录 attack-input／projectile-hit；47项自检通过；未实机 |
-| 多人普通近战挥砍（批次5） | 离线实现，游戏待验 | `/tpamp equip iron`（隔离测试物资）+ `/tpamp attack left/right [1]`；Iron Broadsword 走原生直接近战；item-hit 记录；47项自检通过；未实机 |
+| 多人铜短剑手动攻击（批次4） | 离线实现，游戏待验 | `/tpamp attack left/right [1]` 经控制者／槽位／物品校验后产生原生刺击 projectile；服务端记录 attack-input／projectile-hit；60项自检通过；未实机 |
+| 多人普通近战挥砍（批次5） | 离线实现，游戏待验 | `/tpamp equip iron`（隔离测试物资，需服务端 `TPA_MP_TEST_EQUIP=1`）+ `/tpamp attack left/right [1]`；Iron Broadsword 走原生直接近战；item-hit 记录；60项自检通过；未实机 |
 | 自动索敌、多人挖掘／拾取／保存 | 未交付 | 手动短攻击不等于完整战斗；测试发物资不能作为正常成长 |
 | 单人历史基线 | 见 [阶段报告](milestone-acceptance.md) | 原生木剑／铁阔剑攻击、铜镐挖掘、goto／home 有阶段性实测；不能直接当作多人能力 |
 
@@ -32,7 +32,7 @@
 | Python离线通过 | 仓库内 `test_run.py` 当前71项，使用 FakeGame、临时邮箱及宿主同步保护，不启动游戏 |
 | 持有物回放 | `tools/InventorySync.SelfCheck` 37项，验证6字节包布局、三件清单、失败处理与单一调用点；不验证发放／绘制 |
 | 显示回放 | `tools/DisplaySync.SelfCheck` 110项，纯逻辑回放，不证明画面 |
-| 攻击回放 | `tools/Combat.SelfCheck` 47项，验证命令／身份策略和源码调用契约；不证明原生射弹或命中 |
+| 攻击回放 | `tools/Combat.SelfCheck` 60项，验证命令／身份策略和源码调用契约；不证明原生射弹或命中 |
 | 本机DLL检查 | 43项在被忽略的 `.local/research/BridgeCheck` 读取实际模组DLL，用手工构造状态检查协议／门控；不是完整游戏模拟或可移植CI套件 |
 | C# 构建通过 | `scripts/build.ps1` 能编译打包；只证明编译，不证明游戏内行为 |
 | 真实 API 通过 | 实际调用 DeepSeek 完成一个受限目标；不用 Mock 响应代替 |
@@ -48,7 +48,7 @@
 | 2 中文短目标 | `/tpamp goal` 由生成者控制；真实模型左右短移动、替换、stop、自动 A→B→stop 通过；60tick输入不恢复 | 仅左右移动和停止，每次≤3秒；第二真人、真实断线重连未验 |
 | 3 初始装备／持有物显示 | 服务器 Spawn 按普通经典三件初始化一次；`Snapshot` 可观察 inventory／selectedSlot／item；客户端包尾只同步选中槽；Stop／目标替换／status／重生不重复发放；初始化失败不发布 AI | 离线实现，未实机；客户端只显示一件，不是完整背包同步；单人历史流程仍用 `equip` 开发物资 |
 | 4 铜短剑手动攻击 | `/tpamp attack left/right [1]`；服务器校验控制者、AI 槽位、铜短剑和时长；原生 `ItemCheck_Shoot` 射弹；`attack-input`／`projectile-hit` 有界记录 | 仅铜短剑、仅手动、1秒；未实机；不开放 Python attack、自动索敌或其他武器 |
-| 5 普通近战挥砍 | `/tpamp equip iron` 隔离测试物资；Iron Broadsword 经原生直接近战门控；`item-hit` 记录；复用批次4的输入、停止和身份保护 | 仅 Iron Broadsword、仅手动、1秒；未实机；dedServ 近战框与原生命中触发待验；不开放其他武器 |
+| 5 普通近战挥砍 | `/tpamp equip iron` 隔离测试物资（需服务端 `TPA_MP_TEST_EQUIP=1`）；Iron Broadsword 经原生直接近战门控；`item-hit` 记录；复用批次4的输入、停止和身份保护 | 仅 Iron Broadsword、仅手动、1秒；未实机；默认关闭测试夹具；dedServ 近战框与原生命中触发待验 |
 
 批次3的原生依据：`new Player()` 不初始化物品；普通新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 按难度写入，普通经典三件为 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506），均调用 `Prefix(-1)`。清单经公开 `PlayerLoader.GetStartingItems` 接入模组扩展点，并由 `PlayerLoader.SetStartInventory` 放置槽位；本产品只使用普通经典三件。详见 [多人探针](multiplayer-probe.md)。
 

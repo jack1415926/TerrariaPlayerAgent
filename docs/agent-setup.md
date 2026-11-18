@@ -32,7 +32,7 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 批次4增加手动 `/tpamp attack left/right [1]`：只允许当前控制者、AI 持有铜短剑时发起最多1秒的原生刺击 projectile。它是开发期手动入口，Python 工具白名单没有 attack，也不代表自动索敌或完整战斗已支持。实机前仍以离线策略／源码契约为准。
 
-批次5研究普通挥砍并增加 `/tpamp equip iron` 隔离测试物资 + Iron Broadsword 直接近战路径；它只用于验收，不是正常装备成长。服务器仍只允许铜短剑和 Iron Broadsword 两种代表物品，弓箭／魔法／召唤／鞭子只研究未实现。
+批次5研究普通挥砍并增加 `/tpamp equip iron` 隔离测试物资 + Iron Broadsword 直接近战路径；它只用于验收，不是正常装备成长。该命令默认关闭，Host & Play 用 `.\scripts\play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动后服务端才会看到 `TPA_MP_TEST_EQUIP=1`；普通 `-MultiplayerAgent` 不会开启。服务器仍只允许铜短剑和 Iron Broadsword 两种代表物品，弓箭／魔法／召唤／鞭子只研究未实现。
 
 宿主已启动、无活动目标、AI活着且剩余至少2目标额度时运行 `scripts/test-multiplayer-goals.ps1`。脚本按服务器事件完成替换与停止，不能同时人工操作；报告在 `.local/test-results/acceptance-<id>.json`。只读排查用 `play.ps1 -MultiplayerBridge` 与 `run-agent.ps1 -Probe -AgentMode multiplayer_server`，不开放动作。模式／身份字段与有界诊断见 [多人协议](multiplayer-probe.md)。
 
@@ -105,6 +105,6 @@ stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动
 
 ## 已有检查与用量
 
-离线检查入口：`python -B -m unittest discover -s agent -p test_run.py -v`；先按 testing.md 准备可写测试目录。2026-11-18 共71项通过，包含多人身份和共享宿主保护；批次3/4/5另有37项持有物回放、110项显示同步回放与47项攻击策略／调用契约回放。43项 DLL 检查是本机临时检查，不是仓库内完整回归套件。历史失败仍保留在 validation.md，文档修改不重跑测试。
+离线检查入口：`python -B -m unittest discover -s agent -p test_run.py -v`；先按 testing.md 准备可写测试目录。2026-11-18 共71项通过，包含多人身份和共享宿主保护；批次3/4/5另有37项持有物回放、110项显示同步回放与60项攻击策略／调用契约回放。43项 DLL 检查是本机临时检查，不是仓库内完整回归套件。历史失败仍保留在 validation.md，文档修改不重跑测试。
 
 历史单人8次请求任务累计153,201 tokens，含缓存及重复历史，不是本轮多人任务用量，也未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。本轮被取消的请求仍可能计费，报告 turns=0 不能证明未发请求。后续按实际任务测量，不以大型记忆系统或框架迁移阻塞玩法。
