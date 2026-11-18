@@ -1,6 +1,6 @@
 # 游戏机制笔记
 
-适用：本机 Terraria 1.4.4.9 / tModLoader 2026.08.3.0。记录日期：2026-10-21。
+适用：本机 Terraria 1.4.4.9 / tModLoader 2026.08.3.0。记录日期：2026-10-21，最后增补：2026-11-18。
 
 这是随开发按需补充的小型资料笔记。玩法优先查 [Official Terraria Wiki](https://terraria.wiki.gg/)，代码接入以本机版本和项目实际行为为准；不凭印象填写数值，不预先抓取全站或建设数据库。Wiki 新版本规则不直接当成本机旧版本规则。
 
@@ -20,13 +20,13 @@
 
 本次原生铜镐实测同一草地方块先从type2变为type0泥土，15ticks后才真正移除。仅看到类型变化不能当作挖掉；拾取仍需背包证据。
 
-2026-11-18 批次4核对：`ItemID.CopperShortsword` 在 `Item.SetDefaults4` 中先调用 `SetDefaults1(6)`，再覆盖为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`。它不是木剑／铁阔剑的直接近战命中，而是原生刺击 projectile；服务器 AI 需要放行 `ItemCheck_Inner`、`ItemCheck_OwnerOnlyCode` 与 `ItemCheck_Shoot` 的归属门控。手动入口 `/tpamp attack left/right [1]` 是开发期测试，不代表 Python 已开放攻击。
+2026-11-18 批次4核对：铜短剑的原生使用字段和命中链已整理到下方“原生武器机制研究”，本节表格只保留物品身份和当前支持状态。
 
 | 名称 | 本机 ItemID | 项目实际用途与状态 |
 | --- | --- | --- |
 | 铜短剑 Copper Shortsword | `CopperShortsword = 3507` | 普通新角色初始武器；批次3多人服务器 Spawn 已发放（离线，待实机），单人仍不自动发放；批次4已按原生刺击 projectile 路径适配（离线，待实机） |
 | 铜阔剑 Copper Broadsword | `CopperBroadsword = 3508` | 与铜短剑是不同物品；本项目未验证 |
-| 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | `/tpa equip iron` 额外发放的测试装备，已实测命中史莱姆和僵尸 |
+| 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | 单人 `/tpa equip iron` 测试装备已实测；批次5多人 `/tpamp equip iron`（需服务端测试开关）为隔离测试物资，普通挥砍离线、待实机 |
 | 木剑 Wooden Sword | `WoodenSword = 24` | `/tpa equip wood` 额外发放的测试装备，已实测命中恶魔眼 |
 
 本机依据：tML 2026.08.3.0 程序集（本次离线核对使用 `.local/tml/2026.08.3.0` 副本，原安装目录为 `F:\SteamLibrary\steamapps\common\tModLoader`）中 `Terraria.ID.ItemID` 常量；`UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 的普通初始武器发放使用 3507／3509／3506 并各调用 `Prefix(-1)`。`Player` 构造函数初始化背包物品对象，但不执行建角发装备流程；批次3的 `DemoPlayerSystem.Spawn` 只在多人服务器、发布 actor 之前调用 `StartingInventory`，只发放普通经典三件，失败不留下 AI；单人仍由 `Equip` 向 slot 0 发放测试剑。
@@ -45,7 +45,7 @@ Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Sho
 
 每次只补当前功能用到的结论和来源；遇到误解或 bug 就更正对应条目，不增加重复核对流程。玩法规则、项目实现、已经实测的结果分别写清楚。
 
-攻击支持按机制抽样，不逐把验收。点击或长按只是输入；具体可能走挥砍命中、刺击、发射弹丸、消耗弹药或持续引导等路径。同机制优先复用，新增路径选一个代表测通即可。Wiki 的 [Swords](https://terraria.wiki.gg/wiki/Sword) 区分短剑朝光标刺击与阔剑挥砍；这不等于它们必须按每种金属分别适配。本项目下一批以普通初始铜短剑代表新增路径，枪械等留到实际需要时接入。
+攻击支持按机制抽样，不逐把验收。点击或长按只是输入；具体可能走挥砍命中、刺击、发射弹丸、消耗弹药或持续引导等路径。同机制优先复用，新增路径选一个代表测通即可。Wiki 的 [Swords](https://terraria.wiki.gg/wiki/Sword) 区分短剑朝光标刺击与阔剑挥砍；这不等于它们必须按每种金属分别适配。批次4已选铜短剑刺击，批次5已选 Iron Broadsword 挥砍作为代表；枪械、弓箭、魔法、召唤和鞭子仍留到实际需要时接入。
 
 ## 原子武器机制研究（批次5，2026-11-18）
 

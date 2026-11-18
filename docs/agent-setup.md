@@ -28,11 +28,7 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 “开服并游玩”进入测试世界后输入 `/tpamp spawn`，再用 `/tpamp goal <自然语言目标>` 下单、`/tpamp stop` 取消。每次移动最多3秒，目标由当前生成者控制，新目标替换旧目标。当前不接受多人命令行 `-Goal` 或无目标身份的外部 `-Stop`。一邮箱一宿主，示例4目标后退出，待机不请求模型；每目标预算和历史独立。
 
-批次3起，多人服务器 Spawn 在发布 AI 之前给普通经典角色发放三件（铜短剑／镐／斧），只初始化一次；初始化失败则不生成 AI 并回报错误。客户端镜像显示当前选中槽持有物；这是离线实现，尚未实机。单人流程仍不自动发放，继续使用 `equip wood/pick` 开发物资。
-
-批次4增加手动 `/tpamp attack left/right [1]`：只允许当前控制者、AI 持有铜短剑时发起最多1秒的原生刺击 projectile。它是开发期手动入口，Python 工具白名单没有 attack，也不代表自动索敌或完整战斗已支持。实机前仍以离线策略／源码契约为准。
-
-批次5研究普通挥砍并增加 `/tpamp equip iron` 隔离测试物资 + Iron Broadsword 直接近战路径；它只用于验收，不是正常装备成长。该命令默认关闭，Host & Play 用 `.\scripts\play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动后服务端才会看到 `TPA_MP_TEST_EQUIP=1`；普通 `-MultiplayerAgent` 不会开启。服务器仍只允许铜短剑和 Iron Broadsword 两种代表物品，弓箭／魔法／召唤／鞭子只研究未实现。
+批次3／4／5的初始装备、铜短剑攻击和普通挥砍都只有离线实现，实机状态见 [集中清单](acceptance-checklist.md)；本节只保留运行入口。批次3起服务器 Spawn 在发布前按普通经典三件初始化，失败不生成 AI。批次4增加手动 `/tpamp attack left/right [1]`（铜短剑原生刺击 projectile）。批次5增加 Iron Broadsword 普通挥砍；`/tpamp equip iron` 默认关闭，必须用 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动（服务端 `TPA_MP_TEST_EQUIP=1`）才可用，且只是隔离测试物资，不是正常成长。Python 白名单没有 attack，也不代表自动索敌或完整战斗已支持。
 
 宿主已启动、无活动目标、AI活着且剩余至少2目标额度时运行 `scripts/test-multiplayer-goals.ps1`。脚本按服务器事件完成替换与停止，不能同时人工操作；报告在 `.local/test-results/acceptance-<id>.json`。只读排查用 `play.ps1 -MultiplayerBridge` 与 `run-agent.ps1 -Probe -AgentMode multiplayer_server`，不开放动作。模式／身份字段与有界诊断见 [多人协议](multiplayer-probe.md)。
 

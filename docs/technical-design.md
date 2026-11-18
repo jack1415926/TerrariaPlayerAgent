@@ -1,6 +1,6 @@
 # 当前技术设计与实现
 
-更新：2026-11-16。本文描述当前职责；验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
+更新：2026-11-18。本文描述当前职责；验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
 
 多人已接入服务器权威接触伤害／死亡／软核重生，以及常驻 Python 宿主的中文短目标。生成者通过 `/tpamp goal` 下单，服务器经文件邮箱交给宿主，宿主仅能下发受目标身份约束的左右短移动和停止；反馈经 ModPacket 回到该真人客户端。动作同时匹配世界、AI generation、连接 token、宿主 session、目标 id 和停止版本。客户端镜像只负责显示。批次4仅开放手动 `/tpamp attack` 的铜短剑刺击 projectile；批次5仅额外开放 Iron Broadsword 直接近战（`/tpamp equip iron` 为隔离测试物资）。Python 攻击、自动索敌和其他武器未开放，挖掘适配仍限单人。
 

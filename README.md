@@ -4,7 +4,7 @@
 
 当前包版本 **0.1.1**，C# 12 / .NET 8。当前虚拟 Player 还不具备全部真实玩家语义，产品目标不等于已完成能力。公开仓库不包含游戏、API 凭据、构建产物或存档；本地原始报告 `.local/` 被 Git 忽略。
 
-## 当前状态（2026-11-16）
+## 当前状态（2026-11-18）
 
 | 范围 | 已有证据 | 边界 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ TerrariaPlayerAgent/
 └─ README.md
 ```
 
-主要 C# 文件：`Common/DemoPlayerSystem.cs` 负责 AI 槽位、生命周期与状态快照；`Common/MultiplayerProbe.cs` 负责真人控制归属、命令包与客户端镜像；`Common/MultiplayerAgentBridge.cs` 负责服务器目标邮箱与身份校验；`Common/DisplaySync.cs` 负责显示平滑；`Common/StartingKit.cs` 与 `Common/StartingInventory.cs` 负责多人服务器初始装备条件与发放；`Common/NativeCombat.cs`、`Common/MultiplayerAttackPolicy.cs` 与 `Common/CombatHitProbe.cs` 负责受限多人短攻击的原生适配、身份校验与命中记录。Python 入口是 `agent/run.py`，离线测试是 `agent/test_run.py`；`scripts/play.ps1 -MultiplayerAgent` 启动多人开发环境，`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server` 启动宿主。
+主要 C# 文件：`Common/DemoPlayerSystem.cs` 负责 AI 槽位、生命周期与状态快照；`Common/MultiplayerProbe.cs` 负责真人控制归属、命令包与客户端镜像；`Common/MultiplayerAgentBridge.cs` 负责服务器目标邮箱与身份校验；`Common/DisplaySync.cs` 负责显示平滑；`Common/StartingKit.cs` 与 `Common/StartingInventory.cs` 负责多人服务器初始装备条件与发放；`Common/NativeCombat.cs`、`Common/MultiplayerAttackPolicy.cs`、`Common/CombatHitProbe.cs` 与 `Common/MultiplayerTestEquipPolicy.cs` 负责受限多人短攻击的原生适配、身份校验、命中记录和隔离测试物资门控。Python 入口是 `agent/run.py`，离线测试是 `agent/test_run.py`；`scripts/play.ps1 -MultiplayerAgent` 启动多人开发环境，`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server` 启动宿主。
 
 `.local/` 是本地测试配置、构建产物、报告与临时文件，已被 Git 忽略，不属于仓库结构。
 
@@ -61,11 +61,10 @@ TerrariaPlayerAgent/
 /tpamp spawn
 /tpamp goal 向右走一秒，然后停止，完成后告诉我
 /tpamp attack left 1
-/tpamp equip iron
 /tpamp stop
 ```
 
-`spawn` 创建当前测试 AI；批次3起多人服务器在发布前按普通经典三件初始化（离线，待实机），初始化失败不生成 AI，不再只是空背包，也不通过 `equip` 发测试武器。批次4增加受限的 `/tpamp attack left/right [1]`：只允许当前控制者在 AI 持有铜短剑时手动触发最多1秒的原生刺击 projectile（离线，待实机）。批次5增加 `/tpamp equip iron` 隔离测试物资和 Iron Broadsword 原生普通挥砍；该命令默认关闭，Host & Play 必须用 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动（服务端环境变量 `TPA_MP_TEST_EQUIP=1`）才可用，仅用于验收，不代表正常装备成长。不开放 Python 攻击或自动索敌。目标由生成者控制，新目标替换旧目标；停止取消主动输入，允许原生惯性和重力。`-MaxGoals 4` 指宿主处理4个目标后退出，示例中每目标最多3轮；待机不请求模型。当前仍需外部 Python 宿主，不支持多人挖掘／跟随。
+`spawn` 创建当前测试 AI；批次3起多人服务器在发布前按普通经典三件初始化（离线，待实机），初始化失败不生成 AI，不再只是空背包，也不通过 `equip` 发测试武器。批次4增加受限的 `/tpamp attack left/right [1]`：只允许当前控制者在 AI 持有铜短剑时手动触发最多1秒的原生刺击 projectile（离线，待实机）。批次5增加 `/tpamp equip iron` 隔离测试物资和 Iron Broadsword 原生普通挥砍；该命令默认关闭，Host & Play 必须用 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动（服务端环境变量 `TPA_MP_TEST_EQUIP=1`）才可用，普通 `-MultiplayerAgent` 会话不会开启，仅用于验收，不代表正常装备成长。不开放 Python 攻击或自动索敌。目标由生成者控制，新目标替换旧目标；停止取消主动输入，允许原生惯性和重力。`-MaxGoals 4` 指宿主处理4个目标后退出，示例中每目标最多3轮；待机不请求模型。当前仍需外部 Python 宿主，不支持多人挖掘／跟随。
 
 本机11月13日实机环境为 .NET SDK 8.0.428、tML 2026.9.3.1／Terraria 1.4.4.9；当前离线构建与 IL 核对使用 2026.08.3.0，两处版本差异以实际加载日志为准。新机用 `-TmlPath` 指定自己的安装位置，不照搬本机路径。只使用独立配置 `.local/tModLoader` 下的测试角色 `t`／世界“放松苔原”，不操作正式／云存档；新机无需同名存档。
 
@@ -83,11 +82,11 @@ AI 已生成、无活动目标、多人宿主至少还可接2个目标时运行�
 
 当前仍是手写 Agent loop：Python 请求模型并协调任务，C# 服务器执行受控输入，Terraria 处理原生物理／伤害，客户端镜像只负责显示。单宿主、单在途模型请求和每目标身份校验保护替换／停止。迟到结果不执行，但已发 API 请求不保证取消或免计费。
 
-**下一批：多人原生攻击（未开始）。** 先实机验收批次3的初始装备、客户端持有物显示和重生不重复发放，再选一个代表性原生近战链；完整范围和停止条件见 [TODO](TODO.md)。暂不迁移 LangGraph、不扩第二真人或持久化。
+**当前阶段：集中实机验收。** 批次3的初始装备／客户端持有物显示、批次4的铜短剑刺击、批次5的 Iron Broadsword 普通挥砍都只有离线证据，应在同一次 Host & Play 启动中一起复验；第三批未通过前不把初始装备写成游戏内已交付。本轮不自动进入下一批，完整范围和停止条件见 [TODO](TODO.md)。暂不迁移 LangGraph、不扩第二真人或持久化。
 
 ## 文档入口
 
-- [TODO](TODO.md)：当前待办与下一批验收，已完成过程不重复维护。
+- [TODO](TODO.md)：当前待办与集中实机验收，已完成过程不重复维护。
 - [集中实测清单](docs/acceptance-checklist.md)、[多人运行与协议](docs/multiplayer-probe.md)：当前证据、操作与边界。
 - [技术设计](docs/technical-design.md)、[Agent运行](docs/agent-setup.md)、[测试入口](docs/testing.md)、[调试](docs/debugging.md)。
 - [开发反思](docs/development-experience.md)：本轮绕路、原因与下次做法。

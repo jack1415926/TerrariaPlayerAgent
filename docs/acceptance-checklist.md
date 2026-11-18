@@ -50,11 +50,7 @@
 | 4 铜短剑手动攻击 | `/tpamp attack left/right [1]`；服务器校验控制者、AI 槽位、铜短剑和时长；原生 `ItemCheck_Shoot` 射弹；`attack-input`／`projectile-hit` 有界记录 | 仅铜短剑、仅手动、1秒；未实机；不开放 Python attack、自动索敌或其他武器 |
 | 5 普通近战挥砍 | `/tpamp equip iron` 隔离测试物资（需服务端 `TPA_MP_TEST_EQUIP=1`）；Iron Broadsword 经原生直接近战门控；`item-hit` 记录；复用批次4的输入、停止和身份保护 | 仅 Iron Broadsword、仅手动、1秒；未实机；默认关闭测试夹具；dedServ 近战框与原生命中触发待验 |
 
-批次3的原生依据：`new Player()` 不初始化物品；普通新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 按难度写入，普通经典三件为 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506），均调用 `Prefix(-1)`。清单经公开 `PlayerLoader.GetStartingItems` 接入模组扩展点，并由 `PlayerLoader.SetStartInventory` 放置槽位；本产品只使用普通经典三件。详见 [多人探针](multiplayer-probe.md)。
-
-批次4的原生依据：CopperShortsword（3507）使用 `useStyle=13`（Rapier）、`shoot=938`（CopperShortswordStab）、`noMelee=1`，走原生刺击 projectile；服务器只在 `IsAuthoritativeActor` 且持有铜短剑时放行 `ItemCheck_Inner`／`ItemCheck_Shoot` 的必要归属门控，客户端镜像和真人 Player 不放行。详见 [多人探针](multiplayer-probe.md)。
-
-批次5的原生依据：Iron Broadsword（4）使用 `useStyle=1`（Swing）、`noMelee=0`、`shoot=0`，走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`；服务器只在权威 AI 且背包中实际持有该武器时放行 `ItemCheck_Inner`／`ItemCheck_OwnerOnlyCode` 的直接近战分支。`/tpamp equip iron` 仅为隔离测试物资，不是正常成长能力。详见 [游戏机制](game-mechanics.md)。
+原生依据已收拢到 [游戏机制](game-mechanics.md)：批次3经典三件经 `GetStartingItems`／`SetStartInventory`；批次4 Copper Shortsword 的 Rapier／`CopperShortswordStab` 射弹；批次5 Iron Broadsword 的直接近战链。这里只保留验收结论，不重复调用链细节。
 
 ## 显示同步
 

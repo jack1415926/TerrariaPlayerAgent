@@ -1,4 +1,4 @@
-# 待办与下一批交付
+# 待办与当前验收边界
 
 更新：2026-11-18。当前状态见 [README](README.md) 和 [集中清单](docs/acceptance-checklist.md)，已完成批次与失败历史保留在 [验证记录](docs/validation.md)。本文件只维护当前计划与必要边界。
 
@@ -59,6 +59,8 @@
 - [x] 以 Iron Broadsword 作为代表性普通挥砍，经隔离测试物资 `/tpamp equip iron` 准备；服务器先检查 `TPA_MP_TEST_EQUIP=1`（默认关闭），再放行 `ItemCheck_Inner` 与 `ItemCheck_OwnerOnlyCode` 的必要直接近战分支。
 - [x] 保留批次4铜短剑射弹门控和 `projectile-hit`，新增普通近战 `item-hit` 区分；客户镜像和真人 Player 不放行。
 - [ ] 实机验证 dedServ 近战命中框、原生命中事件、实际伤害，以及从 Iron Broadsword 切回铜短剑的路径。
+
+2026-11-18 离线实现：以 Iron Broadsword 为唯一新增代表武器，复用批次4输入／停止／身份代码；`/tpamp equip iron` 默认关闭，需服务端 `TPA_MP_TEST_EQUIP=1`。第三、四、五批均保持待实机。
 
 ## 后续玩法（不并入当前批次）
 
