@@ -20,9 +20,11 @@
 
 本次原生铜镐实测同一草地方块先从type2变为type0泥土，15ticks后才真正移除。仅看到类型变化不能当作挖掉；拾取仍需背包证据。
 
+2026-11-18 批次4核对：`ItemID.CopperShortsword` 在 `Item.SetDefaults4` 中先调用 `SetDefaults1(6)`，再覆盖为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`。它不是木剑／铁阔剑的直接近战命中，而是原生刺击 projectile；服务器 AI 需要放行 `ItemCheck_Inner`、`ItemCheck_OwnerOnlyCode` 与 `ItemCheck_Shoot` 的归属门控。手动入口 `/tpamp attack left/right [1]` 是开发期测试，不代表 Python 已开放攻击。
+
 | 名称 | 本机 ItemID | 项目实际用途与状态 |
 | --- | --- | --- |
-| 铜短剑 Copper Shortsword | `CopperShortsword = 3507` | 普通新角色初始武器；批次3多人服务器 Spawn 已发放（离线，待实机），单人仍不自动发放；攻击支持仍未适配 |
+| 铜短剑 Copper Shortsword | `CopperShortsword = 3507` | 普通新角色初始武器；批次3多人服务器 Spawn 已发放（离线，待实机），单人仍不自动发放；批次4已按原生刺击 projectile 路径适配（离线，待实机） |
 | 铜阔剑 Copper Broadsword | `CopperBroadsword = 3508` | 与铜短剑是不同物品；本项目未验证 |
 | 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | `/tpa equip iron` 额外发放的测试装备，已实测命中史莱姆和僵尸 |
 | 木剑 Wooden Sword | `WoodenSword = 24` | `/tpa equip wood` 额外发放的测试装备，已实测命中恶魔眼 |
@@ -31,7 +33,7 @@
 
 项目证据：`scripts/smoke-test.ps1 -Combat` 显式执行 equip；`.local/test-results/smoke-20261021-215122.json` 中 AI slot=1 的命中事件记录 item=4 或 item=24。不能把这些结果写成“默认铜短剑已经通过”。
 
-Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Shortsword)、[Iron Broadsword](https://terraria.wiki.gg/wiki/Iron_Broadsword)。本次全文访问返回 403，以上物品 ID 和建角流程已由本机程序集确认；不声称已经读取这些条目的全文。后续实现铜短剑时再查需要的攻击机制，不重复调查已经确认的物品身份。
+Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Shortsword)、[Iron Broadsword](https://terraria.wiki.gg/wiki/Iron_Broadsword)。本次全文访问返回 403，以上物品 ID、建角流程和短剑 useStyle／projectile 路径已由本机程序集确认；不声称已经读取这些条目的全文。
 
 ## 死亡与自动重生
 

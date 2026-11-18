@@ -282,3 +282,14 @@ AI保留，主动输入已停止，自动重生仍默认开启。通用矿石强
 - 客户端显示同步：`DisplaySync` 只依据服务器包里的显式 `Teleported` 标记重置缓冲，不使用距离猜测；删除未知标记回退后，生产端不再存在 `TeleportKnown=false` 的构造路径。离线显示回放 110 项通过。
 - 检查：`tools/InventorySync.SelfCheck` 37项通过（原14项＋6字节顺序／追加兼容、三件清单、`GetStartingItems` 扩展、失败处理与单一调用点）；71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。失败测试是异常注入，`Spawn` 发布顺序由源码契约检查覆盖；自检使用本地 Terraria shim，只证明清单、失败返回和调用顺序，不证明真实发放或绘制，也不能称为真实游戏已验证。
 - 仍待实机：普通经典新角色对照（三件）、客户端手持与修饰词显示、stop／替换／一次原生重生不重复初始化、目标环境（记录为 tML 2026.9.3.1）中 `SetStartInventory` 的实际表现。
+
+## 2026-11-18 批次4多人原生短攻击（离线）
+
+- 程序集核对（tML 2026.08.3.0）：`ItemID.CopperShortsword = 3507` 在 `Item.SetDefaults4` 中先调用 `SetDefaults1(6)`，再覆盖为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`；因此它走原生刺击 projectile，不是木剑／铁阔剑的直接近战命中。
+- 归属分支：`ItemCheck_Inner` 的第一个 `Main.myPlayer` 门控会跳过非本地槽；`ItemCheck_OwnerOnlyCode` 在射弹之后用 `whoAmI == Main.myPlayer` 门控；`ItemCheck_Shoot` 在非本地时只 `ApplyItemTime` 并返回。服务器 AI 需要保持对象归属并放行 `ItemCheck_Inner` 与 `ItemCheck_Shoot`；`ItemCheck_OwnerOnlyCode` 的射弹调用在前、直接近战门控在后，保持单人规则即可。`NativeCombat` 只对 `IsAuthoritativeActor` 且持有铜短剑的服务器 Actor 放行，客户端镜像、真人 Player、被真实连接占用的槽位都不放行；单人木剑／铁阔剑和挖掘规则保持原样。
+- 实现：新增 `Common/MultiplayerAttackPolicy.cs`（命令解析、方向、控制者／存活／权威／物品／1秒上限校验）和 `Common/CombatHitProbe.cs`（服务端 `GlobalNPC.OnHitByProjectile` 按 projectile owner 记录 AI 命中）；`MultiplayerProbe` 增加 `attack_left`／`attack_right` 请求处理，接受前取消目标、`RequestStop`、清除旧输入，再调用 `DemoPlayerSystem.Attack` 并记录 `attack-input`；`DemoPlayerSystem` 增加 `RecordProjectileHit`。命令为 `/tpamp attack left/right [1]`，请求包布局未改，`StateKind` 布局未改。
+- 观察：`Snapshot()` 的 `attackTicks`／`itemAnimation`／`usingItem` 表示输入与动画状态；`combatEvents` 记录 `attack-input` 与 `projectile-hit`（item、projectile、npc、npcType、damage、targetLifeAfter）。不修改 `NPC.life`，不伪造命中。`ModPlayer.OnHitNPCWithProj` 文档标注客户端命中调用，因此不使用它作为服务器权威记录来源。
+- 生命周期：`Attack` 先 `Stop`；`Stop` 清攻击输入；`RequestStop`、`Remove`、死亡、重生、手动移动、新目标、控制者失效、真实连接占槽和世界退出都复用既有清除路径；已经开始的单次原生动画允许自然完成。
+- 检查：`tools/Combat.SelfCheck` 41项通过（命令范围／方向、控制者／存活／权威／物品校验、`DemoPlayerSystem` 清理与目标替换、`NativeCombat` 射弹门控的源码契约）；InventorySync 37项、DisplaySync 110项、71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。未启动游戏、未调用真实模型。
+- 未验收：原生命中事件是否在服务器触发、铜短剑刺击 projectile 是否实际生成并造成伤害、客户端是否看到攻击动画、真人 Player 与客户端镜像是否完全不受影响。阶段结论只能是“已编译、离线契约通过”，不能写成“AI 已在游戏中攻击成功”。
+- 额外限制：tML 2026.08.3.0 的 `Player.ItemCheck_ApplyUseStyle_Inner` 开头有 `Main.dedServ` 早退，专用服务器不会执行使用样式的视觉旋转；服务器仍可设置 `direction` 并进入 `ItemCheck_Shoot`，但刺击 projectile 的实际朝向／动画只能在实机确认。本批没有为此强行写 `itemRotation` 或改原生动画。

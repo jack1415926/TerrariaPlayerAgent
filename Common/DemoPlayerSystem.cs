@@ -247,6 +247,22 @@ public sealed class DemoPlayerSystem : ModSystem
             item = item.type, npc = npc.whoAmI, npcType = npc.type, damage, targetLifeAfter = npc.life });
     }
 
+    internal void RecordProjectileHit(Projectile projectile, NPC npc, int damage)
+    {
+        if (Actor == null) return;
+        hitCount++;
+        RecordCombat(new { kind = "projectile-hit", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
+            item = Actor.HeldItem.type, projectile = projectile.type, npc = npc.whoAmI, npcType = npc.type,
+            damage, targetLifeAfter = npc.life });
+    }
+
+    internal void RecordAttackStart(int direction, int ticks)
+    {
+        if (Actor == null) return;
+        RecordCombat(new { kind = "attack-input", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
+            item = Actor.HeldItem.type, direction, ticks });
+    }
+
     internal void RecordHurt(Player.HurtInfo info)
     {
         hurtCount++;
@@ -483,7 +499,6 @@ public sealed class DemoUpdateProbe : ModPlayer
     public override void PreUpdate() => ModContent.GetInstance<DemoPlayerSystem>().RecordUpdate(Player);
 
     private DemoPlayerSystem System => ModContent.GetInstance<DemoPlayerSystem>();
-    private bool IsActor => Main.netMode == NetmodeID.SinglePlayer && ReferenceEquals(Player, System.Actor);
 
     public override void PostUpdate()
     {
@@ -494,7 +509,7 @@ public sealed class DemoUpdateProbe : ModPlayer
 
     public override void OnHitNPCWithItem(Item item, NPC target, NPC.HitInfo hit, int damageDone)
     {
-        if (IsActor) System.RecordHit(item, target, damageDone);
+        if (NativeCombat.IsAuthoritativeActor(Player)) System.RecordHit(item, target, damageDone);
     }
 
     public override void OnHurt(Player.HurtInfo info)

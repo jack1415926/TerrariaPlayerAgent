@@ -1,6 +1,6 @@
 # 多人虚拟 Player：运行、协议与验收
 
-更新：2026-11-16。当前一名真人场景已通过基础角色、显示平滑、清理、原生接触受伤／死亡／软核重生、服务器只读桥，以及真实模型中文短目标／反馈。自动 A→B→stop 验收通过，60tick输入未恢复。批次3的服务器初始装备与客户端持有物显示已离线实现、待实机；主动攻击、多人挖掘、保存和第二客户端仍未交付或未验；历史过程按日期单列。
+更新：2026-11-18。当前一名真人场景已通过基础角色、显示平滑、清理、原生接触受伤／死亡／软核重生、服务器只读桥，以及真实模型中文短目标／反馈。自动 A→B→stop 验收通过，60tick输入未恢复。批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑手动攻击均已离线实现、待实机；自动攻击、多人挖掘、保存和第二客户端仍未交付或未验；历史过程按日期单列。
 
 ## 范围与运行
 
@@ -12,13 +12,14 @@
 /tpamp diag
 /tpamp team 1
 /tpamp right 1
+/tpamp attack left 1
 /tpamp stop
 /tpamp remove
 ```
 
-team 为原生数值 0–5；本轮仅验证队伍 1 的当前客户端红队地图／信息显示，未验其他颜色或其他组队效果。左右移动限制 1–10 秒（整数），客户端与服务器均校验。生成者独占控制、离线清理及真实连接占槽时让位已写入代码，仍待实测；其他客户端查询和控制拒绝也待补。
+team 为原生数值 0–5；本轮仅验证队伍 1 的当前客户端红队地图／信息显示，未验其他颜色或其他组队效果。左右移动限制 1–10 秒（整数），攻击仅允许铜短剑且最多 1 秒；客户端与服务器均校验。生成者独占控制、离线清理及真实连接占槽时让位已写入代码，仍待实测；其他客户端查询和控制拒绝也待补。
 
-服务器执行移动控制，每6tick发送状态，客户端创建显示镜像，反馈走聊天回包；不直接改坐标伪造移动。AI没有真正的网络客户端连接，不宣称享有全部联机玩家语义。自然语言短目标和接触受伤／重生已接入；批次3在服务器 Spawn 初始化经典初始装备并同步客户端选中槽持有物（离线，待实机）；主动攻击、挖掘、持久化未交付。`/tpa`仍限单人，JSON邮箱按模式分工，见下方批次1／2／3。
+服务器执行移动控制，每6tick发送状态，客户端创建显示镜像，反馈走聊天回包；不直接改坐标伪造移动。AI没有真正的网络客户端连接，不宣称享有全部联机玩家语义。自然语言短目标和接触受伤／重生已接入；批次3在服务器 Spawn 初始化经典初始装备并同步客户端选中槽持有物（离线，待实机）；批次4提供受限的 `/tpamp attack left/right [1]` 手动铜短剑攻击（离线，待实机），不开放 Python 攻击、自动索敌／挖掘／持久化。`/tpa`仍限单人，JSON邮箱按模式分工，见下方批次1／2／3／4。
 
 本机默认由用户使用“开服并游玩”，助手启动脚本只启动客户端；不要同时再开独立服务器占用端口。需要专门验证生成者离线且服务器存活时，另行安排持久服务器或让非房主成为生成者。
 
@@ -153,3 +154,14 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 - 客户端：`StateKind` 在包尾追加 `HeldItemWire`（selected slot、type、prefix、stack）；客户端只更新镜像选中槽的显示物品，服务器仍是权威；换槽清旧槽，镜像重建后由下一包恢复。修饰词经 `Item.Prefix(int)` 应用，不直接写 `item.prefix`：前者校验 `CanHavePrefixes`／`CanApplyPrefix` 并计算伤害、速度、稀有度等派生值，直接赋值会跳过这些步骤。不改真人背包，不复制完整背包同步。
 - 离线证据：`tools/InventorySync.SelfCheck` 37 项通过（6字节顺序与追加兼容、三件清单、`GetStartingItems` 扩展、失败处理与单一调用点）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。失败测试是异常注入，且 `Spawn` 的发布顺序由源码契约检查覆盖，不能当作真实游戏已验证。
 - 实机待验：普通经典新角色与 AI 初始物品逐项对照（三件）；客户端手持物及修饰词显示；stop／目标替换／一次原生重生后不重复发放；客户端重建镜像不产生额外物品；其他模组 `AddStartingItems` 是否给 AI 额外物品。
+
+## 多人原生短攻击（批次 4，2026-11-18，离线）
+
+- 原生依据（tML 2026.08.3.0 程序集）：`ItemID.CopperShortsword = 3507` 走 `Item.SetDefaults4`，基础模板调用 `SetDefaults1(6)`，结果为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`；3507 再覆盖伤害、使用时间、击退和 `shoot = 938`。因此它**不是**木剑／铁阔剑的直接近战命中，而是原生短剑刺击 projectile。
+- 归属判断：`ItemCheck_Inner` 第一个 `Main.myPlayer` 门控会跳过非本地槽；`ItemCheck_OwnerOnlyCode` 的 `whoAmI == Main.myPlayer` 门控在射弹之后；`ItemCheck_Shoot` 在 `whoAmI != Main.myPlayer` 时只应用物品时间并返回。服务器 AI 要产生原生射弹，必须在保持对象归属的前提下放行 `ItemCheck_Inner` 与 `ItemCheck_Shoot`；`ItemCheck_OwnerOnlyCode` 的射弹调用在前、直接近战门控在后，保持单人规则即可。`NativeCombat` 只对 `IsAuthoritativeActor` 且当前持有铜短剑的服务器 Actor 放行，单人木剑／铁阔剑和挖掘路径不变。
+- 手动入口：`/tpamp attack left|right [1]`（省略秒数默认 1，只允许 1 秒）。`MultiplayerProbeCommand` 发送 `attack_left`／`attack_right` 请求；服务器校验当前控制者、AI 存活、AI 槽位归属／未被真实连接占用、`HeldItem.type == 3507` 和时长，再取消当前目标、递增 `StopRevision`、清除旧输入并调用 `DemoPlayerSystem.Attack`。请求包仍是 `kind + action + int`，`StateKind` 布局未改。
+- 观察：`DemoPlayerSystem.Snapshot()` 的 `attackTicks`、`itemAnimation`、`usingItem` 表示输入和动画状态；`combatEvents` 新增 `attack-input` 与 `projectile-hit`（含 attacker、item、projectile、npc、npcType、damage、targetLifeAfter）。`CombatHitProbe` 使用服务端 `GlobalNPC.OnHitByProjectile` 记录 AI 拥有的 projectile 命中；不修改 `NPC.life`，不伪造事件。`ModPlayer.OnHitNPCWithProj` 的 tML 文档标注为客户端命中时调用，因此不作为服务器 AI 的权威记录来源。
+- 生命周期：`Attack` 先 `Stop()`；`Stop` 清 `attackTicks`／输入；`RequestStop`、`Remove`、死亡、重生、手动移动、新目标、控制者失效、真实连接占槽和世界退出都复用既有清除路径。已经开始的单次原生动画允许自然完成。
+- 离线证据：`tools/Combat.SelfCheck` 41 项通过（命令范围、方向、控制者／存活／权威／物品校验，以及 DemoPlayerSystem 清理、目标替换和 NativeCombat 射弹门控的源码契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
+- 实机待验：铜短剑原生刺击 projectile 是否真的生成、`OnHitByProjectile` 是否记录到实际伤害、Stop／替换／重生后是否停止后续输入，以及真人 Player 和客户端镜像是否完全不受归属补丁影响。Python Agent 的 attack 工具本批未开放。
+- 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认 slot0 为 3507 铜短剑 → 在 AI 面朝方向放置／等待一个普通敌怪 → `/tpamp attack left 1`（或在右侧重复）→ 再查 `status` 的 `attackTicks`／`itemAnimation`／`combatEvents` → `/tpamp stop`；随后复验一次重生和一次新目标替换。只有出现原生命中事件与实际伤害，才能记为攻击通过。

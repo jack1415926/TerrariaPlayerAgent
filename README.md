@@ -11,12 +11,13 @@
 | 多人基本角色 | 一名真人场景生成、持续更新、移动／遇坎跳跃、停止、红队显示、移除重建、关服重进清理通过 | AI 不是独立网络客户端；第二真人、存活服务器断线清理和真实占槽冲突未实测 |
 | 显示同步 | 用户确认当前移动平滑、停止及时 | 断流／瞬移恢复和第二客户端画面未实测，无性能测量 |
 | 多人受伤与重生 | 自然怪物接触受伤、死亡、软核重生后再次受伤有日志；用户复测选敌看起来正常 | 复用原生选敌，没有强制仇恨；未定位此前选敌现象的独立根因，不宣称完整战斗通过 |
-| 多人短目标 | 中文聊天下单、接单／移动／结束反馈、真实模型左右短移动通过 | 当前仅左右移动和停止，每次移动最多3秒；主动攻击、挖掘、拾取未交付 |
+| 多人短目标 | 中文聊天下单、接单／移动／结束反馈、真实模型左右短移动通过 | 当前移动每次最多3秒；Python 攻击、挖掘、拾取未交付 |
 | 多人初始装备与持有物显示 | 批次3离线实现：服务器 Spawn 在发布 AI 前按普通经典三件初始化一次；失败不生成 AI；客户端只显示选中槽持有物；37项回放通过 | 尚未实机对照、死亡重生复验；单人历史流程仍用测试物资 |
+| 多人铜短剑手动攻击 | 批次4离线实现：`/tpamp attack left/right [1]`；服务器校验控制者／槽位／铜短剑；原生刺击 projectile 路径；41项自检通过 | 未实机；仅手动、1秒、单武器；不开放 Python 攻击或自动索敌 |
 | 目标生命周期 | 只读桥、移除／重建／世界身份变化、真实 A→B 替换与移动中停止通过 | 完整恢复、真实重连、长时间稳定性仍待验 |
 | 单人历史基线 | 原生木剑／铁阔剑攻击、铜镐挖掘、goto／home 有阶段性实测 | 不能直接当作多人能力；拾取入包、合成和保存未交付 |
 
-最近一轮（2026-11-16）：71项 Python 检查、37项持有物布局／初始清单回放、110项显示同步回放通过，构建0警告0错误；43项本机临时 DLL 检查仍只作协议／门控参考。批次3的初始装备与客户端显示尚未实机，不能写成游戏内已通过。43项 DLL 检查不是仓库内可直接复跑的 CI 套件，范围与报告见 [集中清单](docs/acceptance-checklist.md) 和 [验证记录](docs/validation.md)。
+最近一轮（2026-11-18）：71项 Python 检查、41项攻击策略／调用契约回放、37项持有物回放、110项显示同步回放通过，构建0警告0错误；43项本机临时 DLL 检查仍只作协议／门控参考。批次3的初始装备／客户端显示和批次4的铜短剑攻击尚未实机，不能写成游戏内已通过。43项 DLL 检查不是仓库内可直接复跑的 CI 套件，范围与报告见 [集中清单](docs/acceptance-checklist.md) 和 [验证记录](docs/validation.md)。
 
 ## 项目结构
 
@@ -30,14 +31,14 @@ TerrariaPlayerAgent/
 ├─ Localization/                      英文文本
 ├─ agent/                             Python 手写宿主：模型循环、提示词、测试
 ├─ scripts/                           build / play / run-agent / smoke / 验收脚本
-├─ tools/                             离线自检：DisplaySync、InventorySync
+├─ tools/                             离线自检：DisplaySync、InventorySync、Combat
 ├─ docs/                              设计、运行、协议、验收与历史记录
 ├─ .env.example                       API 环境变量模板（不含凭据）
 ├─ TODO.md                            当前计划与下一步边界
 └─ README.md
 ```
 
-主要 C# 文件：`Common/DemoPlayerSystem.cs` 负责 AI 槽位、生命周期与状态快照；`Common/MultiplayerProbe.cs` 负责真人控制归属、命令包与客户端镜像；`Common/MultiplayerAgentBridge.cs` 负责服务器目标邮箱与身份校验；`Common/DisplaySync.cs` 负责显示平滑；`Common/StartingKit.cs` 与 `Common/StartingInventory.cs` 负责多人服务器初始装备条件与发放。Python 入口是 `agent/run.py`，离线测试是 `agent/test_run.py`；`scripts/play.ps1 -MultiplayerAgent` 启动多人开发环境，`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server` 启动宿主。
+主要 C# 文件：`Common/DemoPlayerSystem.cs` 负责 AI 槽位、生命周期与状态快照；`Common/MultiplayerProbe.cs` 负责真人控制归属、命令包与客户端镜像；`Common/MultiplayerAgentBridge.cs` 负责服务器目标邮箱与身份校验；`Common/DisplaySync.cs` 负责显示平滑；`Common/StartingKit.cs` 与 `Common/StartingInventory.cs` 负责多人服务器初始装备条件与发放；`Common/NativeCombat.cs`、`Common/MultiplayerAttackPolicy.cs` 与 `Common/CombatHitProbe.cs` 负责受限多人短攻击的原生适配、身份校验与命中记录。Python 入口是 `agent/run.py`，离线测试是 `agent/test_run.py`；`scripts/play.ps1 -MultiplayerAgent` 启动多人开发环境，`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server` 启动宿主。
 
 `.local/` 是本地测试配置、构建产物、报告与临时文件，已被 Git 忽略，不属于仓库结构。
 
@@ -58,10 +59,11 @@ TerrariaPlayerAgent/
 ```text
 /tpamp spawn
 /tpamp goal 向右走一秒，然后停止，完成后告诉我
+/tpamp attack left 1
 /tpamp stop
 ```
 
-`spawn` 创建当前测试 AI；批次3起多人服务器在发布前按普通经典三件初始化（离线，待实机），初始化失败不生成 AI，不再只是空背包，也不通过 `equip` 发测试武器。目标由生成者控制，新目标替换旧目标；停止取消主动输入，允许原生惯性和重力。`-MaxGoals 4` 指宿主处理4个目标后退出，示例中每目标最多3轮；待机不请求模型。当前仍需外部 Python 宿主，不支持多人攻击／挖掘／跟随。
+`spawn` 创建当前测试 AI；批次3起多人服务器在发布前按普通经典三件初始化（离线，待实机），初始化失败不生成 AI，不再只是空背包，也不通过 `equip` 发测试武器。批次4增加受限的 `/tpamp attack left/right [1]`：只允许当前控制者在 AI 持有铜短剑时手动触发最多1秒的原生刺击 projectile（离线，待实机），不会开放 Python 攻击或自动索敌。目标由生成者控制，新目标替换旧目标；停止取消主动输入，允许原生惯性和重力。`-MaxGoals 4` 指宿主处理4个目标后退出，示例中每目标最多3轮；待机不请求模型。当前仍需外部 Python 宿主，不支持多人挖掘／跟随。
 
 本机11月13日实机环境为 .NET SDK 8.0.428、tML 2026.9.3.1／Terraria 1.4.4.9；当前离线构建与 IL 核对使用 2026.08.3.0，两处版本差异以实际加载日志为准。新机用 `-TmlPath` 指定自己的安装位置，不照搬本机路径。只使用独立配置 `.local/tModLoader` 下的测试角色 `t`／世界“放松苔原”，不操作正式／云存档；新机无需同名存档。
 

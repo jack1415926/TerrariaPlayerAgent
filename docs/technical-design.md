@@ -2,7 +2,7 @@
 
 更新：2026-11-16。本文描述当前职责；验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
 
-多人已接入服务器权威接触伤害／死亡／软核重生，以及常驻 Python 宿主的中文短目标。生成者通过 `/tpamp goal` 下单，服务器经文件邮箱交给宿主，宿主仅能下发受目标身份约束的左右短移动和停止；反馈经 ModPacket 回到该真人客户端。动作同时匹配世界、AI generation、连接 token、宿主 session、目标 id 和停止版本。客户端镜像只负责显示。原生主动攻击／挖掘适配仍限单人，不能据此开放多人命令。
+多人已接入服务器权威接触伤害／死亡／软核重生，以及常驻 Python 宿主的中文短目标。生成者通过 `/tpamp goal` 下单，服务器经文件邮箱交给宿主，宿主仅能下发受目标身份约束的左右短移动和停止；反馈经 ModPacket 回到该真人客户端。动作同时匹配世界、AI generation、连接 token、宿主 session、目标 id 和停止版本。客户端镜像只负责显示。批次4仅开放手动 `/tpamp attack` 的铜短剑刺击 projectile；Python 攻击、自动索敌和其他武器未开放，挖掘适配仍限单人。
 
 ```mermaid
 flowchart LR
@@ -37,6 +37,7 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱；stop／remove清掉待发目标 |
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
 | Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像、有界平滑和持有物显示；不复制怪物选敌逻辑 |
+| Common/NativeCombat.cs、MultiplayerAttackPolicy.cs、CombatHitProbe.cs | 服务器权威 AI 的铜短剑原生刺击 projectile 适配；手动 `/tpamp attack` 的身份／物品／时长校验；服务端记录原生 projectile 命中，不伪造伤害 |
 | Common/StartingInventory.cs、StartingKit.cs、HeldItemWire.cs | 多人服务器 Spawn 时按普通经典三件经 `PlayerLoader.GetStartingItems`／`SetStartInventory` 初始化一次，失败不发布 AI；持有物包字段只用于客户端显示，服务器仍是权威 |
 | Common/MultiplayerAgentBridge.cs | 显式只读／动作开关、目标收发、身份校验、短移动白名单、回执过滤 |
 | Common/MultiplayerGoalAcceptance.cs、agent/acceptance.py | 有界开发验收：真实接单后替换、移动开始后停止、观察60tick；不参与普通决策 |
@@ -65,11 +66,11 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## 原生物品与结果
 
-主动攻击的起手／近战归属适配仍限单人和已支持物品。接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
+批次4已离线适配服务器权威 AI 的铜短剑刺击 projectile（`useStyle 13`／`shoot 938`，经 `ItemCheck_Shoot`）；木剑／铁阔剑的直接近战适配仍限单人。接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 
-原生PickTile前后记录坐标、工具、类型／存在性和broken。草地变泥土不算移除，移除不算拾取。库存可观察并选择；equip wood／iron／pick只在开发模式发测试物资。批次3已在多人服务器 Spawn 按普通经典三件初始化一次（`StartingInventory`，待实机），初始化失败不发布 AI；单人历史流程仍不自动发放。木剑／铁阔剑攻击已适配；普通挥动镐可用，斧／锤／钻头等未交付。
+原生PickTile前后记录坐标、工具、类型／存在性和broken。草地变泥土不算移除，移除不算拾取。库存可观察并选择；equip wood／iron／pick只在开发模式发测试物资。批次3已在多人服务器 Spawn 按普通经典三件初始化一次（`StartingInventory`，待实机），初始化失败不发布 AI；批次4只对手动铜短剑放行原生刺击 projectile（`ItemCheck_Shoot`），不开放 Python 攻击、自动索敌或其他武器。单人历史流程仍不自动发放；木剑／铁阔剑攻击和普通挥动镐可用，斧／锤／钻头等未交付。
 
 ## Agent与开发入口
 

@@ -150,6 +150,30 @@ public sealed class MultiplayerProbe : ModSystem
                 combatDiagnosticTicks = 1200;
                 reply = "Combat diagnostics enabled for 20s; repeat your position-switching test, then query status.";
             }
+            else if (action is "attack_left" or "attack_right")
+            {
+                if (!MultiplayerAttackPolicy.TryDirection(action, out int direction))
+                    reply = "Invalid attack direction.";
+                else
+                {
+                    string? invalid = MultiplayerAttackPolicy.Validate(
+                        ControllerValid, controller == sender,
+                        Demo.Actor is { active: true, dead: false },
+                        Demo.Actor != null && NativeCombat.IsAuthoritativeActor(Demo.Actor),
+                        Demo.Actor?.HeldItem.type ?? 0, direction, value);
+                    if (invalid != null)
+                        reply = invalid;
+                    else
+                    {
+                        ModContent.GetInstance<MultiplayerAgentBridge>().CancelGoal();
+                        Demo.RequestStop();
+                        Demo.Attack(direction, value * 60);
+                        Demo.RecordAttackStart(direction, value * 60);
+                        reply = $"Probe attacking {(direction < 0 ? "left" : "right")} for {value}s with " +
+                            $"{Demo.Actor!.HeldItem.Name}.";
+                    }
+                }
+            }
             else if (action == "stop")
             {
                 ModContent.GetInstance<MultiplayerAgentBridge>().StopGoal();
