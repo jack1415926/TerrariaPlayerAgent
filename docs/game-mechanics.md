@@ -46,3 +46,36 @@ Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Sho
 每次只补当前功能用到的结论和来源；遇到误解或 bug 就更正对应条目，不增加重复核对流程。玩法规则、项目实现、已经实测的结果分别写清楚。
 
 攻击支持按机制抽样，不逐把验收。点击或长按只是输入；具体可能走挥砍命中、刺击、发射弹丸、消耗弹药或持续引导等路径。同机制优先复用，新增路径选一个代表测通即可。Wiki 的 [Swords](https://terraria.wiki.gg/wiki/Sword) 区分短剑朝光标刺击与阔剑挥砍；这不等于它们必须按每种金属分别适配。本项目下一批以普通初始铜短剑代表新增路径，枪械等留到实际需要时接入。
+
+## 原子武器机制研究（批次5，2026-11-18）
+
+依据本机 tML 2026.08.3.0 程序集与 IL；未在游戏中执行。`useStyle`、`shoot`、`noMelee` 只用于辅助判断，不能单独证明两件武器走同一条命中链。
+
+### 共用主流程
+
+- `Player.Update` 调用 `ItemCheckWrapped`，后者对每个玩家槽调用 `Player.ItemCheck`；`ItemCheck` 经 `PlayerLoader.PreItemCheck` 进入 `ItemCheck_Inner`。这条外层流程没有按 `Main.myPlayer` 直接跳过整个虚拟槽。
+- `ItemCheck_Inner` 开头的 `Main.myPlayer` 门控、`ItemCheck_OwnerOnlyCode` 的 `whoAmI == Main.myPlayer` 门控，以及 `ItemCheck_Shoot` 在非本地时的提前返回，是服务器 AI 需要逐项处理的客户端身份条件。
+- `controlUseItem` / `releaseUseItem` 驱动使用输入；`itemAnimation`、`itemTime`、`itemAnimationMax` 和冷却由原生 `ItemCheck` 维护。`ItemCheck_ApplyUseStyle_Inner` 开头有 `Main.dedServ` 早退；专用服务器跳过使用样式的视觉位置／旋转。
+- `ItemCheck_GetMeleeHitbox` 在 `Main.dedServ` 时跳过按手持物品帧重算矩形，改用 `itemLocation`（由服务器侧 `ItemCheck_ApplyHoldStyle_Inner` 设置）作为基础；因此服务器近战命中框比本地客户端简化，必须实机确认。
+- 直接近战命中走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`；`ProcessHitAgainstNPC` 经 `CombinedHooks.OnPlayerHitNPCWithItem` 调用 `ItemLoader.OnHitNPC`、`NPCLoader.OnHitByItem`、`PlayerLoader.OnHitNPCWithItem`。IL 中这些调用没有额外的 `netMode` 早退；服务器模拟是否确实触发仍需实机。
+- 射弹武器走 `ItemCheck_Shoot → Projectile.NewProjectile`，owner 由传入的 player 槽位决定；服务器权威 Actor 可以拥有 projectile。射弹命中由 `GlobalNPC.OnHitByProjectile`（服务端、按 owner）观察，不依赖客户端 `ModPlayer.OnHitNPCWithProj`。
+- 瞄准：本地客户端主要使用 `Main.mouseX/Y`、`itemRotation` 和 `fullRotation`；专用服务器没有真实鼠标，`useStyle` 位置计算又会被 `dedServ` 跳过。当前 AI 只支持水平左右方向，不提供完整二维瞄准。
+- 资源：弓箭的 `useAmmo` 路径在 `ItemCheck_Shoot` 中经 `PickAmmo` 选弹并消耗；魔法武器的魔力检查／消耗在原生物品使用流程内；召唤、鞭子和持续类武器还有各自的特殊分支。本批只研究，不统一抽象。
+
+### 代表性机制
+
+| 类型 | 代表物品 | 原生物品使用路径 | 关键输入／资源 | 关键归属或客户端条件 | 当前 AI 支持 |
+| --- | --- | --- | --- | --- | --- |
+| 普通挥砍 | Iron Broadsword（4） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC` | `controlUseItem`；无弹药；原生冷却 | `Main.myPlayer` 两处门控；dedServ 近战框使用 `itemLocation` | 批次5 离线接入（受限测试物资） |
+| 短剑刺击 | Copper Shortsword（3507） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_Shoot → CopperShortswordStab(938)` | `useStyle=13`、`shoot=938`、`noMelee=1`；无弹药；原生冷却 | `ItemCheck_Shoot` 非本地早退；服务器射弹 owner | 批次4 离线接入 |
+| 弓箭 | Wooden Bow（39） | `ItemCheck_Shoot → PickAmmo → projectile` | 弓与箭 `useAmmo`；消耗箭 | `ItemCheck_Shoot`／瞄准；弹药库存 | 未实现，仅研究 |
+| 魔法 | Wand of Sparking（3069） | 原生使用 → `ItemCheck_Shoot` → 魔法 projectile | 魔力检查／消耗；瞄准 | 客户端使用样式、魔力、射弹 owner | 未实现，仅研究 |
+| 召唤 | Slime Staff（1309） | 原生使用 → minion 生成／召唤物所有权 | 魔力；召唤槽 | `ItemCheck_MinionAltFeatureUse` 等特殊分支 | 未实现，仅研究 |
+| 鞭子 | Bone Whip（5074） | 原生使用 → 鞭击／特殊射弹或命中 | 原生冷却；非普通挥砍 | 特殊命中与客户端表现 | 未实现，仅研究 |
+
+### 本批结论
+
+- 普通挥砍与铜短剑可以共用：`IsAuthoritativeActor` 身份保护、`DemoPlayerSystem.Attack` 输入时长、Stop／Remove／死亡／目标替换清理、`Snapshot` 和 `combatEvents` 观察。
+- 两者不能共用同一条命中适配：普通挥砍需要 `ItemCheck_OwnerOnlyCode` 的直接近战门控，铜短剑需要 `ItemCheck_Shoot` 的射弹门控；命中记录也分别是 `item-hit` 与 `projectile-hit`。
+- 当前仍保留两个受限 ID：`IronBroadsword` 和 `CopperShortsword`。这是为避免把尚未验证的武器一次性开放，不是长期 registry；后续只有在同一机制实机通过后才考虑扩大范围。
+- 普通挥砍的 dedServ 命中框、`ProcessHitAgainstNPC` 的服务器 Hook 触发和实际伤害都尚未实机验证；不能把本批离线契约通过写成“服务器 AI 已能挥剑命中”。

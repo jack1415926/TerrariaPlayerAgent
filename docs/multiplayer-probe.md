@@ -1,6 +1,6 @@
 # 多人虚拟 Player：运行、协议与验收
 
-更新：2026-11-18。当前一名真人场景已通过基础角色、显示平滑、清理、原生接触受伤／死亡／软核重生、服务器只读桥，以及真实模型中文短目标／反馈。自动 A→B→stop 验收通过，60tick输入未恢复。批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑手动攻击均已离线实现、待实机；自动攻击、多人挖掘、保存和第二客户端仍未交付或未验；历史过程按日期单列。
+更新：2026-11-18。当前一名真人场景已通过基础角色、显示平滑、清理、原生接触受伤／死亡／软核重生、服务器只读桥，以及真实模型中文短目标／反馈。自动 A→B→stop 验收通过，60tick输入未恢复。批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑手动攻击、批次5的 Iron Broadsword 手动挥砍均已离线实现、待实机；自动攻击、多人挖掘、保存和第二客户端仍未交付或未验；历史过程按日期单列。
 
 ## 范围与运行
 
@@ -13,6 +13,7 @@
 /tpamp team 1
 /tpamp right 1
 /tpamp attack left 1
+/tpamp equip iron
 /tpamp stop
 /tpamp remove
 ```
@@ -162,6 +163,16 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 - 手动入口：`/tpamp attack left|right [1]`（省略秒数默认 1，只允许 1 秒）。`MultiplayerProbeCommand` 发送 `attack_left`／`attack_right` 请求；服务器校验当前控制者、AI 存活、AI 槽位归属／未被真实连接占用、`HeldItem.type == 3507` 和时长，再取消当前目标、递增 `StopRevision`、清除旧输入并调用 `DemoPlayerSystem.Attack`。请求包仍是 `kind + action + int`，`StateKind` 布局未改。
 - 观察：`DemoPlayerSystem.Snapshot()` 的 `attackTicks`、`itemAnimation`、`usingItem` 表示输入和动画状态；`combatEvents` 新增 `attack-input` 与 `projectile-hit`（含 attacker、item、projectile、npc、npcType、damage、targetLifeAfter）。`CombatHitProbe` 使用服务端 `GlobalNPC.OnHitByProjectile` 记录 AI 拥有的 projectile 命中；不修改 `NPC.life`，不伪造事件。`ModPlayer.OnHitNPCWithProj` 的 tML 文档标注为客户端命中时调用，因此不作为服务器 AI 的权威记录来源。
 - 生命周期：`Attack` 先 `Stop()`；`Stop` 清 `attackTicks`／输入；`RequestStop`、`Remove`、死亡、重生、手动移动、新目标、控制者失效、真实连接占槽和世界退出都复用既有清除路径。已经开始的单次原生动画允许自然完成。
-- 离线证据：`tools/Combat.SelfCheck` 41 项通过（命令范围、方向、控制者／存活／权威／物品校验，以及 DemoPlayerSystem 清理、目标替换和 NativeCombat 射弹门控的源码契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
+- 离线证据：`tools/Combat.SelfCheck` 47 项通过（命令范围、方向、控制者／存活／权威／物品校验，以及 DemoPlayerSystem 清理、目标替换和 NativeCombat 射弹门控的源码契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
 - 实机待验：铜短剑原生刺击 projectile 是否真的生成、`OnHitByProjectile` 是否记录到实际伤害、Stop／替换／重生后是否停止后续输入，以及真人 Player 和客户端镜像是否完全不受归属补丁影响。Python Agent 的 attack 工具本批未开放。
 - 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认 slot0 为 3507 铜短剑 → 在 AI 面朝方向放置／等待一个普通敌怪 → `/tpamp attack left 1`（或在右侧重复）→ 再查 `status` 的 `attackTicks`／`itemAnimation`／`combatEvents` → `/tpamp stop`；随后复验一次重生和一次新目标替换。只有出现原生命中事件与实际伤害，才能记为攻击通过。
+
+## 普通近战挥砍与原生武器研究（批次 5，2026-11-18，离线）
+
+- 研究结论见 [游戏机制](game-mechanics.md) 的“原始武器机制研究”：普通阔剑直接近战走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`；铜短剑仍走 `ItemCheck_Shoot` 射弹；弓箭、魔法、召唤和鞭子只研究调用链，不开放。
+- 实现：`NativeCombat` 增加 `IsServerSwing`，只对服务器权威 AI、实际持有的 Iron Broadsword（4）且 `useStyle=Swing`、`noMelee=false`、`shoot<=0` 的玩家放行 `ItemCheck_Inner`／`ItemCheck_OwnerOnlyCode`。铜短剑的 `ItemCheck_Shoot` 规则不变；`IsAuthoritativeActor`、停止、目标替换和生命周期代码没有改变。
+- 测试物资：`/tpamp equip iron` 是隔离测试夹具，只允许当前控制者、存活且仍拥有 AI 槽位的权威 Actor；回包明确标记“Test fixture only; not normal progression”。它不是正常装备成长，也不能作为后续全武器开放的依据。
+- 攻击入口复用 `/tpamp attack left/right [1]`；`MultiplayerAttackPolicy` 只允许铜短剑（3507）和 Iron Broadsword（4）两种代表物品。普通近战命中由 `DemoUpdateProbe.OnHitNPCWithItem` 记录为 `item-hit`，短剑射弹仍由 `CombatHitProbe.OnHitByProjectile` 记录为 `projectile-hit`；两者都只记录原生事件。
+- 服务器仍只支持水平左右方向，不提供完整二维瞄准；专用服务器 `ItemCheck_ApplyUseStyle_Inner` 会早退，`ItemCheck_GetMeleeHitbox` 使用简化的 `itemLocation` 命中框，必须实机确认。
+- 离线证据：`tools/Combat.SelfCheck` 47 项通过（命令／身份／物品策略、Iron Broadsword 源码规则、equip 夹具校验、既有停止和调用点契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
+- 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认初始铜短剑 → `/tpamp equip iron`（测试夹具）→ 面向普通敌怪 `/tpamp attack left 1` → 查 `item-hit` 的 attacker／item=4／npc／damage／targetLifeAfter → `/tpamp stop`；若需要复验铜短剑，先 `/tpamp remove` 再 `/tpamp spawn` 重新获得普通经典三件。第三、四、五批应在同一次 Host & Play 启动中一起验收。

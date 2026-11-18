@@ -150,6 +150,21 @@ public sealed class MultiplayerProbe : ModSystem
                 combatDiagnosticTicks = 1200;
                 reply = "Combat diagnostics enabled for 20s; repeat your position-switching test, then query status.";
             }
+            else if (action == "equip_iron")
+            {
+                if (!ControllerValid || controller != sender)
+                    reply = "Only the current AI controller can equip the test weapon.";
+                else if (Demo.Actor == null || Demo.Actor.dead)
+                    reply = "No living AI. Spawn one or wait for automatic respawn.";
+                else if (!NativeCombat.IsAuthoritativeActor(Demo.Actor))
+                    reply = "The AI slot or identity changed; equip rejected.";
+                else
+                {
+                    ModContent.GetInstance<MultiplayerAgentBridge>().CancelGoal();
+                    Demo.RequestStop();
+                    reply = Demo.Equip("iron") + " Test fixture only; not normal progression.";
+                }
+            }
             else if (action is "attack_left" or "attack_right")
             {
                 if (!MultiplayerAttackPolicy.TryDirection(action, out int direction))

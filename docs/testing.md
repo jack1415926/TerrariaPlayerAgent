@@ -24,19 +24,19 @@ python -B -m unittest discover -s agent -p test_run.py -v
 
 2026-11-18 仓库内共71项通过；43项DLL检查在本机被忽略的辅助目录中，依赖本机游戏与手工构造状态，并不是公开可复跑的CI套件。单人图形碰撞隔离检查曾因字体未初始化失败，不以资格门控检查代替完整单人游戏回归。再次确有需要时只提取必要、可参数化的小检查，不先搭测试框架。
 
-批次3／4新增的离线回放（无需游戏／API）：
+批次3／4／5新增的离线回放（无需游戏／API）：
 
 ```powershell
 dotnet run --project tools/InventorySync.SelfCheck -c Release   # 37项：HeldItemWire布局、三件清单与失败处理
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 110项：显示同步回归
-dotnet run --project tools/Combat.SelfCheck -c Release         # 41项：攻击命令、身份策略与生命周期调用点
+dotnet run --project tools/Combat.SelfCheck -c Release         # 47项：攻击命令、身份策略与生命周期调用点
 ```
 
 InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位放置和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。
 
-CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验，并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查；它不加载tModLoader，不执行IL钩子，也不证明原生projectile真的生成或命中。
+CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验，并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查；它不加载tModLoader，不执行IL钩子，也不证明原生projectile或近战命中真的发生。
 
-批次3的服务器初始装备与客户端持有物显示仍待实机；批次4的铜短剑手动攻击只完成了命令、策略和源码调用契约的离线检查，原生 projectile 生成与命中伤害必须实机确认，不能由自检结果代替。
+批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑刺击、批次5的 Iron Broadsword 普通挥砍都尚未实机；自检只覆盖命令、策略和源码调用契约，不能代替引擎执行。
 
 ## 单人历史 smoke 入口
 

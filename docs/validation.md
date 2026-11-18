@@ -290,6 +290,16 @@ AI保留，主动输入已停止，自动重生仍默认开启。通用矿石强
 - 实现：新增 `Common/MultiplayerAttackPolicy.cs`（命令解析、方向、控制者／存活／权威／物品／1秒上限校验）和 `Common/CombatHitProbe.cs`（服务端 `GlobalNPC.OnHitByProjectile` 按 projectile owner 记录 AI 命中）；`MultiplayerProbe` 增加 `attack_left`／`attack_right` 请求处理，接受前取消目标、`RequestStop`、清除旧输入，再调用 `DemoPlayerSystem.Attack` 并记录 `attack-input`；`DemoPlayerSystem` 增加 `RecordProjectileHit`。命令为 `/tpamp attack left/right [1]`，请求包布局未改，`StateKind` 布局未改。
 - 观察：`Snapshot()` 的 `attackTicks`／`itemAnimation`／`usingItem` 表示输入与动画状态；`combatEvents` 记录 `attack-input` 与 `projectile-hit`（item、projectile、npc、npcType、damage、targetLifeAfter）。不修改 `NPC.life`，不伪造命中。`ModPlayer.OnHitNPCWithProj` 文档标注客户端命中调用，因此不使用它作为服务器权威记录来源。
 - 生命周期：`Attack` 先 `Stop`；`Stop` 清攻击输入；`RequestStop`、`Remove`、死亡、重生、手动移动、新目标、控制者失效、真实连接占槽和世界退出都复用既有清除路径；已经开始的单次原生动画允许自然完成。
-- 检查：`tools/Combat.SelfCheck` 41项通过（命令范围／方向、控制者／存活／权威／物品校验、`DemoPlayerSystem` 清理与目标替换、`NativeCombat` 射弹门控的源码契约）；InventorySync 37项、DisplaySync 110项、71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。未启动游戏、未调用真实模型。
+- 检查：`tools/Combat.SelfCheck` 47项通过（命令范围／方向、控制者／存活／权威／物品校验、`DemoPlayerSystem` 清理与目标替换、`NativeCombat` 射弹门控的源码契约）；InventorySync 37项、DisplaySync 110项、71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。未启动游戏、未调用真实模型。
 - 未验收：原生命中事件是否在服务器触发、铜短剑刺击 projectile 是否实际生成并造成伤害、客户端是否看到攻击动画、真人 Player 与客户端镜像是否完全不受影响。阶段结论只能是“已编译、离线契约通过”，不能写成“AI 已在游戏中攻击成功”。
 - 额外限制：tML 2026.08.3.0 的 `Player.ItemCheck_ApplyUseStyle_Inner` 开头有 `Main.dedServ` 早退，专用服务器不会执行使用样式的视觉旋转；服务器仍可设置 `direction` 并进入 `ItemCheck_Shoot`，但刺击 projectile 的实际朝向／动画只能在实机确认。本批没有为此强行写 `itemRotation` 或改原生动画。
+
+## 2026-11-18 批次5普通近战与原生武器研究（离线）
+
+- 研究主流程：`Player.Update → ItemCheckWrapped → Player.ItemCheck → PlayerLoader.PreItemCheck → ItemCheck_Inner`；`ItemCheck_Inner` 第一处 `Main.myPlayer` 门控、`ItemCheck_OwnerOnlyCode` 的 `whoAmI == Main.myPlayer` 门控、`ItemCheck_Shoot` 的非本地早退是虚拟槽需要处理的客户端身份条件。`ItemCheck_ApplyUseStyle_Inner` 有 `Main.dedServ` 早退；`ItemCheck_GetMeleeHitbox` 在专用服务器跳过手持物品帧重算，改用 `itemLocation` 的简化命中框。
+- 普通挥砍：Iron Broadsword（4）为 `useStyle=1`（Swing）、`noMelee=0`、`shoot=0`，走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`。`ProcessHitAgainstNPC` 调用 `CombinedHooks.OnPlayerHitNPCWithItem`，其中包含 `ItemLoader.OnHitNPC`／`NPCLoader.OnHitByItem`／`PlayerLoader.OnHitNPCWithItem`；IL 未显示额外 `netMode` 早退，但服务器实机触发仍需确认。
+- 研究对照：Wooden Bow（39）走 `ItemCheck_Shoot` + `useAmmo`／`PickAmmo` 消耗箭；Wand of Sparking（3069）走魔法 projectile 与魔力路径；Slime Staff（1309）走召唤／minion 特殊分支；Bone Whip（5074）是鞭击特殊路径。四类均只研究，不实现；详见 `game-mechanics.md`。
+- 实现：`NativeCombat` 增加 `IsServerSwing`，只对服务器权威 AI、实际持有 Iron Broadsword 且字段符合 Swing 的物品放行 `ItemCheck_Inner`／`ItemCheck_OwnerOnlyCode`；铜短剑的 `ItemCheck_Shoot` 门控不变。`MultiplayerAttackPolicy` 只允许 CopperShortsword（3507）与 IronBroadsword（4），没有 WeaponAdapter／Registry。新增 `/tpamp equip iron` 隔离测试夹具，服务器校验控制者／存活／权威槽位后调用既有 `Demo.Equip`，回包标记为测试物资；不是正常成长。
+- 复用：`IsAuthoritativeActor`、`DemoPlayerSystem.Attack` 的时长输入、Stop／Remove／死亡／重生／目标替换清理、`Snapshot`、`attack-input`／`item-hit`／`projectile-hit` 有界事件。普通近战命中共用 `DemoUpdateProbe.OnHitNPCWithItem`，短剑仍由 `CombatHitProbe.OnHitByProjectile` 记录，事件来源可区分。
+- 检查：`tools/Combat.SelfCheck` 47项通过（策略与源码契约、Iron Broadsword 规则、equip 夹具、客户端不放行、单人规则保留）；InventorySync 37项、DisplaySync 110项、71项 Python 通过；C# 构建0警告0错误，`.tmod` 打包成功。未启动游戏、未调用真实模型。
+- 未验收：专用服务器近战命中框是否落在 AI 前方、`ProcessHitAgainstNPC` 的 ModLoader 命中 Hook 是否在服务器实际触发、NPC 是否实际掉血、射弹与近战事件是否不重复；Iron Broadsword 测试物资不得当作正常成长。第三批初始装备、第四批铜短剑、第五批普通挥砍应在同一次 Host & Play 中一起复验。

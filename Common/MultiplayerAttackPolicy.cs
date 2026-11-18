@@ -4,6 +4,10 @@ namespace TerrariaPlayerAgent.Common;
 internal static class MultiplayerAttackPolicy
 {
     internal const int MaxSeconds = 1;
+    internal const int IronBroadsword = 4;
+
+    internal static bool IsSupportedAttackItem(int heldItemType) =>
+        heldItemType is StartingKit.CopperShortsword or IronBroadsword;
 
     internal static bool TryParseCommand(string[] args, out string action, out int seconds)
     {
@@ -34,8 +38,8 @@ internal static class MultiplayerAttackPolicy
             return "No living AI. Spawn one or wait for automatic respawn.";
         if (!authoritative)
             return "The AI slot or identity changed; attack rejected.";
-        if (heldItemType != StartingKit.CopperShortsword)
-            return "Only the Copper Shortsword attack is supported in this batch.";
+        if (!IsSupportedAttackItem(heldItemType))
+            return "Only Copper Shortsword or Iron Broadsword attacks are supported in this batch.";
         if (direction is not (-1 or 1) || seconds is < 1 or > MaxSeconds)
             return "Use /tpamp attack left/right [1 second].";
         return null;

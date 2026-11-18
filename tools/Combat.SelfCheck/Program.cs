@@ -56,6 +56,10 @@ internal static class Program
 
         Check("valid controller, AI, item and range are accepted",
             MultiplayerAttackPolicy.Validate(true, true, true, true, StartingKit.CopperShortsword, -1, 1) == null);
+        Check("iron broadsword swing is accepted",
+            MultiplayerAttackPolicy.Validate(true, true, true, true, MultiplayerAttackPolicy.IronBroadsword, 1, 1) == null);
+        Check("unsupported attack item is rejected",
+            MultiplayerAttackPolicy.Validate(true, true, true, true, 24, 1, 1) != null);
         Check("non-controller is rejected",
             MultiplayerAttackPolicy.Validate(false, true, true, true, StartingKit.CopperShortsword, 1, 1) != null);
         Check("controller mismatch is rejected",
@@ -131,6 +135,13 @@ internal static class Program
         Check("command routes attack through the probe",
             command.Contains("MultiplayerAttackPolicy.TryParseCommand(args", StringComparison.Ordinal) &&
             command.Contains("Request(attackAction, seconds)", StringComparison.Ordinal));
+        Check("equip iron is an explicit test fixture",
+            command.Contains("args[1] == \"iron\"", StringComparison.Ordinal) &&
+            command.Contains("Request(\"equip_iron\")", StringComparison.Ordinal));
+        Check("server equip fixture validates controller and authority",
+            probe.Contains("action == \"equip_iron\"", StringComparison.Ordinal) &&
+            probe.Contains("NativeCombat.IsAuthoritativeActor(Demo.Actor)", StringComparison.Ordinal) &&
+            probe.Contains("Demo.Equip(\"iron\")", StringComparison.Ordinal));
 
         string combat = File.ReadAllText(Path.Combine(root, "Common", "NativeCombat.cs"));
         Check("server projectile guard is hooked",
@@ -141,6 +152,15 @@ internal static class Program
         Check("server copper shortsword is the ranged rule",
             combat.Contains("ItemID.CopperShortsword", StringComparison.Ordinal) &&
             combat.Contains("OwnerRule.Ranged", StringComparison.Ordinal));
+        Check("server iron broadsword is the swing rule",
+            combat.Contains("IsServerSwing", StringComparison.Ordinal) &&
+            combat.Contains("ItemID.IronBroadsword", StringComparison.Ordinal) &&
+            combat.Contains("ItemUseStyleID.Swing", StringComparison.Ordinal) &&
+            combat.Contains("!player.HeldItem.noMelee", StringComparison.Ordinal) &&
+            combat.Contains("player.HeldItem.shoot <= ProjectileID.None", StringComparison.Ordinal));
+        Check("server swing is allowed by both input and melee owner rules",
+            combat.Contains("OwnerRule.Melee => IsSinglePlayerMelee(player) || IsServerSwing(player)", StringComparison.Ordinal) &&
+            combat.Contains("OwnerRule.Supported => IsSinglePlayerMelee(player) || IsServerSwing(player)", StringComparison.Ordinal));
         Check("single-player melee and mining rules remain",
             combat.Contains("IsSinglePlayerMelee", StringComparison.Ordinal) &&
             combat.Contains("ItemID.WoodenSword or ItemID.IronBroadsword", StringComparison.Ordinal) &&

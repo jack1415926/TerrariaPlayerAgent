@@ -58,15 +58,23 @@ public sealed class NativeCombat : ModSystem
     private static bool IsSinglePlayerMelee(Player player) => Main.netMode == NetmodeID.SinglePlayer &&
         player.HeldItem.type is ItemID.WoodenSword or ItemID.IronBroadsword;
 
+    // Representative server swing only. The field checks guard against a modded item merely
+    // sharing the ID; the ID whitelist stays until the hitbox path is verified in game.
+    private static bool IsServerSwing(Player player) => Main.netMode == NetmodeID.Server &&
+        player.HeldItem.type is ItemID.IronBroadsword &&
+        player.HeldItem.useStyle == ItemUseStyleID.Swing &&
+        !player.HeldItem.noMelee && player.HeldItem.shoot <= ProjectileID.None;
+
     private static bool IsServerShortsword(Player player) => Main.netMode == NetmodeID.Server &&
         player.HeldItem.type == ItemID.CopperShortsword;
 
     private static bool AllowedByRule(Player player, OwnerRule rule) => rule switch
     {
-        OwnerRule.Melee => IsSinglePlayerMelee(player) || NativeMining.Active(player),
-        OwnerRule.Ranged => IsServerShortsword(player),
-        OwnerRule.Supported => IsSinglePlayerMelee(player) || IsServerShortsword(player) ||
+        OwnerRule.Melee => IsSinglePlayerMelee(player) || IsServerSwing(player) ||
             NativeMining.Active(player),
+        OwnerRule.Ranged => IsServerShortsword(player),
+        OwnerRule.Supported => IsSinglePlayerMelee(player) || IsServerSwing(player) ||
+            IsServerShortsword(player) || NativeMining.Active(player),
         _ => true
     };
 
