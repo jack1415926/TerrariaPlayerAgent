@@ -223,6 +223,7 @@ public sealed class MultiplayerProbe : ModSystem
             long serverTick = reader.ReadInt64();
             byte flags = reader.ReadByte();
             HeldItemWire held = HeldItemWire.Read(reader);
+            int itemAnimation = reader.ReadInt32(), itemAnimationMax = reader.ReadInt32();
             if (slot < 0 || slot >= Main.maxPlayers || slot == Main.myPlayer) return;
             if (mirrorSlot != slot) ClearMirror();
             if (mirror == null)
@@ -236,15 +237,20 @@ public sealed class MultiplayerProbe : ModSystem
             }
             if (!ReferenceEquals(Main.player[slot], mirror)) { ClearMirror(); return; }
             // Keep the authoritative sample; position is applied per tick in PostUpdatePlayers.
-            display.Add(new SyncSnapshot
+            var result = display.Add(new SyncSnapshot
             {
                 Sequence = sequence, ServerTick = serverTick,
                 X = position.X, Y = position.Y, VelocityX = velocity.X, VelocityY = velocity.Y,
                 ReceivedAt = Now, Teleported = (flags & 1) != 0
             });
+            if (result != SnapshotResult.Accepted) return;
             mirror.direction = direction; mirror.team = team;
             mirror.statLife = life; mirror.dead = life <= 0;
             ApplyHeldItem(held);
+            // Feed the native remote-player animation without setting use input or running another update.
+            mirror.lastVisualizedSelectedItem = mirror.HeldItem;
+            mirror.itemAnimationMax = itemAnimationMax;
+            mirror.itemAnimation = mirror.dead ? 0 : itemAnimation;
         }
         else if (Main.netMode == NetmodeID.MultiplayerClient && kind == ReplyKind)
             Main.NewText(reader.ReadString(), Color.LightBlue);
@@ -336,6 +342,8 @@ public sealed class MultiplayerProbe : ModSystem
             packet.Write((byte)(teleported ? 1 : 0));
             Item held = actor.HeldItem;
             new HeldItemWire(actor.selectedItem, held.type, held.prefix, held.stack).Write(packet);
+            packet.Write(actor.itemAnimation);
+            packet.Write(actor.itemAnimationMax);
         }
         else hasSentPosition = false;
         packet.Send();
