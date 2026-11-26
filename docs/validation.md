@@ -309,3 +309,26 @@ AI保留，主动输入已停止，自动重生仍默认开启。通用矿石强
 - `/tpamp equip iron` 现在要求服务端环境 `TPA_MP_TEST_EQUIP=1`（默认关闭）。Host & Play 通过 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 显式设置；普通 `-MultiplayerAgent` 不设置该变量，客户端请求不能开启。服务器在 equip 分支最先检查该开关，关闭时只回错误，不取消目标、不改 StopRevision、不碰背包；开启后仍校验控制者、存活和 `IsAuthoritativeActor`，成功路径仍先取消目标并 `RequestStop`。
 - `RecordProjectileHit` 不再把命中时 `HeldItem` 写成 `item`：改为 `heldItemAtHit`，并保留 `projectileOwner`、`projectile`、NPC、damage、targetLifeAfter。`item-hit` 的 `item` 仍来自原生命中 Hook，`attack-input` 的 `item` 仍表示发起时武器；三类事件语义不再混淆。检查 `agent/run.py` 只消费 `item-hit`，没有消费者读取 `projectile-hit` 的旧 `item` 字段。
 - 检查：`tools/Combat.SelfCheck` 60项通过（新增默认开关、开关先于副作用、`play.ps1` 独立开关、projectile 字段语义检查）；InventorySync 37项、DisplaySync 110项、71项 Python 通过；C# 构建0警告0错误。未实机。
+
+
+## 2026-11-26 至 11-27 多人攻击与原生交互验收
+
+环境为 tML 2026.9.3.1／Terraria 1.4.4.9、.NET SDK 8.0.428，在独立测试配置中由一名真人 Host & Play，与服务器 AI 同场。铁阔剑启用显式测试装备开关。本轮手动武器与掉落拾取未调用模型 API。
+
+### 失败、定位与修复
+
+- 初次实测只能看到转向或短剑方向抽动。铜短剑的原生射弹曾被服务器鼠标改变方向，且虚拟槽位在伤害结算和初次射弹广播处被本地玩家门控跳过。修复使用指令方向、原生刺击射弹、当前 AI 对象归属校验及一次显式 `SyncProjectile` 广播。实机曾看到刺击动作但无剑身，发放日志确认当时已选中铜短剑。
+- 铁阔剑装备后原生 `ItemCheck_PlayInstruments` 出现空引用。专用服务器还跳过原生挥砍位置计算，命中框随之偏离角色。权威 AI 的铁阔剑分支避开客户端乐器逻辑，复用原生挥砍位置和直接近战。客户端镜像同步选中物品、物品动画与最大帧数，忽略过期快照。
+- 初次挥砍已对史莱姆造成 10 点伤害并击杀。后来固定傀儡测试首轮命中两个傀儡，每个目标随后持续无法再被同一 AI 命中。实际程序集复现 `UpdateMeleeHitCooldowns` 的本地玩家门控。放行 AI 原生递减后，同一目标三次挥砍均在本机重测命中，未重置目标对象。
+- `NativePlayerInteractions` 限服务器权威 AI 接入原生 Buff 倒计时／到期清理，以及 `GrabItems`／`PickupItem`。保留拾取预约、容量、原生堆叠与模组钩子，并发送服务器地面物品变更。
+
+### 通过项与证据
+
+- 11-27 生成日志与起步快照显示铜短剑、铜镐、铜斧各一，选中铜短剑。玩家确认客户端刺击剑身和伤害数字可见；向右四条攻击指令分别对同一傀儡（NPC slot 103、type 488）得到 5 条原生 `projectile-hit`，全部为射弹 938、攻击者与 owner 均为 AI slot 254。独立左向命令没有命中事件；当轮命中场景以右侧固定靶为准。
+- 11-27 铁阔剑两轮右向攻击分别在 tick 11945 与 12476 开始，各获得 3 条针对同一傀儡的 `item-hit`，每次 11–14 点记录伤害。傀儡生命仍为 1000。两条独立命令均能再次命中，因此复验了原先的首轮后失效。11-26 测试中的史莱姆击杀独立支持真实敌怪掉血和击杀。
+- 11-27 拾取前快照无墓碑；同一 AI 在用户丢下墓碑后快照出现 type 1176 的一叠墓碑，数量 11。快照证明墓碑进入 AI 背包，不能分辨逐件拾取次数。收尾采样时生命 100，攻击输入已自然清零。
+- 11-26 修复版另有一次自然史莱姆接触死亡和软核重生记录。重生后服务器快照保留铁阔剑、铜镐、铜斧及其数量，攻击输入为零。
+- 本机实际程序集验证铜短剑左右刺击伤害与广播、旧射弹归属隔离、铁阔剑同靶连续三轮、客户端动画快照、Buff 从 3 tick 到 0 并清除、物品预约保护、满包与部分堆叠。仓库 71 项 Python 与 207 项 C# 自检具有通过记录，实测构建 0 警告、0 错误。本机动态夹具与原始报告位于被忽略的 `.local/`，不作为可移植 CI 用例。
+- Buff 到期的 Host & Play 实测、真人初始背包逐项对照、目标替换后背包保持和攻击中主动取消仍待补。第二真人及远程独立服务器另外验收。固定傀儡用于日常命中回归，普通一秒攻击自然结束，无需每轮输入 `stop`。
+
+本地原始证据留存于 `.local/test-results/` 的 `mp-weapon-live-20261126.txt`、`mp-dummy-repeated-hit-20261126.txt`、`mp-dummy-acceptance-20261127.txt`、`mp-acceptance-20261127-001002.json`、`mp-acceptance-20261127-001327.json` 和 `mp-iron-after-respawn-20261126-232911.json`。

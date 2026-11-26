@@ -1,6 +1,15 @@
 # 本地自动测试与 Enter 诊断
 
-包版本：0.1.1；文档更新：2026-11-18。当前多人入口见下方；单人 smoke／战斗／Enter调查为历史工具，不适用于多人目标验收。证据状态统一见 [集中清单](acceptance-checklist.md)，文档整理不重新执行测试。
+包版本 0.1.1，文档更新于 2026-11-27。当前多人测试与历史单人入口分列，结果见 [集中清单](acceptance-checklist.md)。
+
+## 多人武器与拾取回归
+
+1. 用 `scripts/play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动独立配置，一名真人通过「开服并游玩」进入测试世界。固定傀儡摆在平地，真人不攻击该靶。
+2. 在傀儡附近 `/tpamp spawn`，确认服务器背包已选中铜短剑。朝靶执行 `/tpamp attack left 1` 或 `/tpamp attack right 1`，核对客户端剑身、伤害数字和服务器 `projectile-hit`。
+3. 执行 `/tpamp equip iron`，保持 AI 与同一傀儡的位置，等一轮攻击自然结束后重复同方向命令。以每轮出现同一 NPC 的原生 `item-hit` 为通过条件。普通攻击回归无需反复 `stop`；测试取消才在动作尚未结束时调用。
+4. 在 AI 脚边丢一小份普通物品，真人退开。检查物品离开地面，并对照两次服务器背包快照。已验证墓碑入包；需要精确计量时用已知数量的独立堆叠。活怪用于验证击杀、接触伤害、死亡和重生。
+
+未验场景为 Host & Play 中限时 Buff 的递减与到期清除。此项与战斗和拾取可在同一名真人＋一个 AI 的世界中进行。当前没有专门的 Buff 施加或回归脚本。
 
 ## 当前多人短目标验收
 
@@ -36,7 +45,7 @@ InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最�
 
 CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验、`TPA_MP_TEST_EQUIP` 服务端开关的前置拒绝，以及 `projectile-hit` 的 `heldItemAtHit`／`projectileOwner` 字段语义；并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查。它不加载tModLoader，不执行IL钩子，也不证明原生projectile或近战命中真的发生。
 
-批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑刺击、批次5的 Iron Broadsword 普通挥砍都尚未实机；自检只覆盖命令、策略和源码调用契约，不能代替引擎执行。
+本机实际程序集回放另覆盖两种武器左右命中、铁阔剑同靶三轮、客户端挥砍状态、Buff 到期、物品预约与部分堆叠。该辅助夹具留在 `.local/research`；仓库内的自检命令仍主要覆盖协议、策略与源码契约。
 
 ## 单人历史 smoke 入口
 

@@ -12,7 +12,7 @@
 - Steam、合法安装的Terraria和tModLoader；启动游戏时Steam须运行且已登录。
 - 实机测试辅助：在tModLoader中安装或订阅 Cheat Sheet 和 HERO's Mod；`play.ps1`会将两者加入独立测试配置的启用列表。它们不随本仓库分发。
 
-最近本机实机环境（2026-11-13）为 **Terraria 1.4.4.9／tModLoader 2026.9.3.1、.NET SDK 8.0.428**；下文2026.08.3.0 release zip是历史离线构建示例，不是当前多人实机版本声明。新机按实际版本检查原生归属钩子，不保证其他版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题；游戏文件不提交仓库。
+最近本机实机环境（2026-11-27）为 **Terraria 1.4.4.9／tModLoader 2026.9.3.1、.NET SDK 8.0.428**；下文2026.08.3.0 release zip是历史离线构建示例，不是当前多人实机版本声明。新机按实际版本检查原生归属钩子，不保证其他版本直接兼容。出现`owner branch missing`／`owner check missing`时先查版本，不是API密钥问题；游戏文件不提交仓库。
 
 ## 2. 克隆并构建
 
@@ -55,7 +55,7 @@ $env:APPDATA         = "$PWD\.local\appdata"
 
 首次启动在项目的`.local/tModLoader`中创建专用本地角色和普通小世界。不要选择Steam云列表里的正式存档。旧机的`t`／“放松苔原”没有上传，新机不需要同名或相同种子才能继续开发。
 
-当前多人路线用 `play.ps1 -MultiplayerAgent -TmlPath '<本机安装目录>'` 启动，再由用户“开服并游玩”。启动默认加载 Cheat Sheet／HERO's Mod；先按本轮目的准备环境并记录实际开关，不为测试改成仅加载项目模组。多人只需 `/tpamp spawn`，批次3起服务器 Spawn 会按经典四件初始化（离线，待实机），不再由 `equip` 发放；单人历史流程仍用下方开发物资。
+使用 `play.ps1 -MultiplayerAgent -TmlPath '<本机安装目录>'`，然后通过「开服并游玩」进入独立测试世界。启动默认加载 Cheat Sheet 与 HERO's Mod。多人 `/tpamp spawn` 已实测初始化铜短剑、铜镐、铜斧各一；验证铁阔剑时额外指定 `-MultiplayerTestEquip`，详细步骤见 [测试入口](testing.md)。
 
 以下为单人历史探索所需的开发物资准备，不能用于证明正常成长；单人进入世界后逐条输入：
 
@@ -99,7 +99,7 @@ notepad .env
 
 ## 5. 继续开发时的入口
 
-先读README、[TODO](../TODO.md)、docs/technical-design.md和docs/development-experience.md；当前多人短目标、显示平滑和自动替换／停止已通过一真人场景，批次3初始装备与持有物显示已离线完成、待实机。随后接多人原生攻击。第二真人、长期稳定性和完整单人失焦恢复仍延后；71项Python检查、14项持有物回放与43项本机临时DLL检查的口径见集中清单，不能泛化为全玩法已完成。
+先读 [README](../README.md)、[TODO](../TODO.md) 和 [技术设计](technical-design.md)。当前一名真人＋一个 AI 的 Host & Play 已验证短目标、两种手动武器及拾取。主清单同时记录 Buff、第二真人与远程服务器的剩余验证，见 [集中清单](acceptance-checklist.md)。
 
 **公司电脑只做离线开发时，不要求启动Steam或游戏、准备角色／世界或API密钥。** Python标准库即可运行现有检查：`python -B -m unittest discover -s agent -p test_run.py -v`；新增检查沿用本地Mock和临时目录。C#构建仍需.NET 8 SDK及匹配的tModLoader文件，没有这些依赖时将构建标为待验证。真实DeepSeek按需少量检查模拟状态下的工具调用，不以此证明游戏动作成功；详细分工和集中验收清单以TODO为准。
 

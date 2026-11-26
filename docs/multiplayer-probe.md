@@ -1,6 +1,6 @@
 # 多人虚拟 Player：运行、协议与验收
 
-更新：2026-11-18。当前一名真人场景已通过基础角色、显示平滑、清理、原生接触受伤／死亡／软核重生、服务器只读桥，以及真实模型中文短目标／反馈。自动 A→B→stop 验收通过，60tick输入未恢复。批次3的服务器初始装备与客户端持有物显示、批次4的铜短剑手动攻击、批次5的 Iron Broadsword 手动挥砍均已离线实现、待实机；自动攻击、多人挖掘、保存和第二客户端仍未交付或未验；历史过程按日期单列。
+更新：2026-11-27。一名真人通过 Host & Play 与服务器 AI 已验证中文短目标、初始装备、两种手动武器、固定傀儡重复命中和一次掉落入包。Buff 到期清理通过本机程序集验证，Host & Play 场景待补。第二真人、独立服务器与完整玩家成长分开验收。
 
 ## 范围与运行
 
@@ -20,9 +20,15 @@
 
 team 为原生数值 0–5；本轮仅验证队伍 1 的当前客户端红队地图／信息显示，未验其他颜色或其他组队效果。左右移动限制 1–10 秒（整数），攻击只允许铜短剑／Iron Broadsword 且最多 1 秒；客户端与服务器均校验。生成者独占控制、离线清理及真实连接占槽时让位已写入代码，仍待实测；其他客户端查询和控制拒绝也待补。
 
-服务器执行移动控制，每6tick发送状态，客户端创建显示镜像，反馈走聊天回包；不直接改坐标伪造移动。AI没有真正的网络客户端连接，不宣称享有全部联机玩家语义。自然语言短目标和接触受伤／重生已接入；批次3在服务器 Spawn 初始化经典初始装备并同步客户端选中槽持有物，批次4提供铜短剑手动攻击，批次5提供 Iron Broadsword 手动挥砍；三者均为离线实现、待实机。`/tpamp equip iron` 需要服务端 `TPA_MP_TEST_EQUIP=1`，默认关闭。`/tpa`仍限单人，JSON邮箱按模式分工，见下方批次1–5。
+服务器执行原生玩家输入，每 6 tick 推送位置、速度、朝向、队伍、生命、选中物品与物品动画。客户端镜像负责表现，反馈走聊天回包。铜短剑剑身通过原生 `SyncProjectile` 显示。铁阔剑夹具需要服务端 `TPA_MP_TEST_EQUIP=1`，默认关闭。
 
 本机默认由用户使用“开服并游玩”，助手启动脚本只启动客户端；不要同时再开独立服务器占用端口。需要专门验证生成者离线且服务器存活时，另行安排持久服务器或让非房主成为生成者。
+
+## 固定傀儡回归（2026-11-27）
+
+通过 [多人实测步骤](testing.md) 使用固定傀儡回归，服务器分别记录铜短剑的 `projectile-hit` 与铁阔剑的 `item-hit`。右侧同一傀儡已记录四轮铜短剑和两轮铁阔剑重复命中；用户确认铜短剑剑身可见。攻击命令最长1秒，到时结束。测试中途取消时使用 `stop`。
+
+`StateKind` 在 `HeldItemWire` 六字节后追加 `itemAnimation` 和 `itemAnimationMax` 两个 Int32。镜像只应用已接受的快照，死亡时清除动画。服务器与客户端需加载同一次构建。拾取沿用原生预约与背包逻辑，服务端广播地面物品变更，背包通过状态桥观察。
 
 ## 多人基础验收范围
 
@@ -148,7 +154,7 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 
 2026-11-13 实机报告 `.local/test-results/acceptance-85ea8609a8c1425ba919cce4601b81f6.json` 为passed：A接单后以新版本替换B，B左移输入开始后立即停止，两个结果均interrupted，之后60tick输入未恢复。末次测试默认加载两个辅助模组；具体白天／禁刷怪开关未说明，不推断已生效。收尾报告 `.local/test-results/goal-closeout-1364583f.json` 为AI生命100、存活、无目标／主动输入，宿主心跳已删除。这些是验收时点，不是实时服务状态。
 
-## 起始装备与持有物同步（批次 3，2026-11-16）
+## 起始装备与持有物同步（批次 3，历史实现，2026-11-16）
 
 - 原生依据（tML 2026.08.3.0 程序集）：`new Player()` 的构造不发放物品；正常新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty`（私有、UI 入口）按难度写入初始物品。普通经典角色写入 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506）并各自 `Prefix(-1)`。随后经公开的 `PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath)` 触发 `ModPlayer.AddStartingItems`／`ModifyStartingInventory`，再由公开的 `PlayerLoader.SetStartInventory(player, items)` 清空并放置槽位（超过50件时由原生 StartBag 收纳）。`Player.DropItems_GetDefaults` 是 mediumcore 掉落用的铜制三件，本次未采用。本产品只使用普通经典三件。
 - 实现：`Common/StartingKit.cs` 保存上述经典清单条件，`Common/StartingInventory.cs` 的 `TryApply` 经 `GetStartingItems` 和 `SetStartInventory` 生成，失败时返回异常；调用方此时还没有发布 actor，因此不备份、不恢复旧库存。`DemoPlayerSystem.Spawn` 只在**多人服务器**（`Main.netMode == Server`）发布 actor 之前调用它；失败直接返回错误文本，不修改 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`、导航和控制器，因此不会留下半初始化却被报告成功的 AI。Stop、目标替换、status、死亡和 `NativeCombat` 的原生重生都没有第二个调用点。
@@ -156,7 +162,7 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 - 离线证据：`tools/InventorySync.SelfCheck` 37 项通过（6字节顺序与追加兼容、三件清单、`GetStartingItems` 扩展、失败处理与单一调用点）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。失败测试是异常注入，且 `Spawn` 的发布顺序由源码契约检查覆盖，不能当作真实游戏已验证。
 - 实机待验：普通经典新角色与 AI 初始物品逐项对照（三件）；客户端手持物及修饰词显示；stop／目标替换／一次原生重生后不重复发放；客户端重建镜像不产生额外物品；其他模组 `AddStartingItems` 是否给 AI 额外物品。
 
-## 多人原生短攻击（批次 4，2026-11-18，离线）
+## 多人原生短攻击（批次 4，历史实现，2026-11-18）
 
 - 原生依据（tML 2026.08.3.0 程序集）：`ItemID.CopperShortsword = 3507` 走 `Item.SetDefaults4`，基础模板调用 `SetDefaults1(6)`，结果为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`；3507 再覆盖伤害、使用时间、击退和 `shoot = 938`。因此它**不是**木剑／铁阔剑的直接近战命中，而是原生短剑刺击 projectile。
 - 归属判断：`ItemCheck_Inner` 第一个 `Main.myPlayer` 门控会跳过非本地槽；`ItemCheck_OwnerOnlyCode` 的 `whoAmI == Main.myPlayer` 门控在射弹之后；`ItemCheck_Shoot` 在 `whoAmI != Main.myPlayer` 时只应用物品时间并返回。服务器 AI 要产生原生射弹，必须在保持对象归属的前提下放行 `ItemCheck_Inner` 与 `ItemCheck_Shoot`；`ItemCheck_OwnerOnlyCode` 的射弹调用在前、直接近战门控在后，保持单人规则即可。`NativeCombat` 只对 `IsAuthoritativeActor` 且当前持有铜短剑的服务器 Actor 放行，单人木剑／铁阔剑和挖掘路径不变。
@@ -167,7 +173,7 @@ C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行
 - 实机待验：铜短剑原生刺击 projectile 是否真的生成、`OnHitByProjectile` 是否记录到实际伤害、Stop／替换／重生后是否停止后续输入，以及真人 Player 和客户端镜像是否完全不受归属补丁影响。Python Agent 的 attack 工具本批未开放。
 - 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认 slot0 为 3507 铜短剑 → 在 AI 面朝方向放置／等待一个普通敌怪 → `/tpamp attack left 1`（或在右侧重复）→ 再查 `status` 的 `attackTicks`／`itemAnimation`／`combatEvents` → `/tpamp stop`；随后复验一次重生和一次新目标替换。只有出现原生命中事件与实际伤害，才能记为攻击通过。
 
-## 普通近战挥砍与原生武器研究（批次 5，2026-11-18，离线）
+## 普通近战挥砍与原生武器研究（批次 5，历史实现，2026-11-18）
 
 - 研究结论见 [游戏机制](game-mechanics.md) 的“原始武器机制研究”：普通阔剑直接近战走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`；铜短剑仍走 `ItemCheck_Shoot` 射弹；弓箭、魔法、召唤和鞭子只研究调用链，不开放。
 - 实现：`NativeCombat` 增加 `IsServerSwing`，只对服务器权威 AI、实际持有的 Iron Broadsword（4）且 `useStyle=Swing`、`noMelee=false`、`shoot<=0` 的玩家放行 `ItemCheck_Inner`／`ItemCheck_OwnerOnlyCode`。铜短剑的 `ItemCheck_Shoot` 规则不变；`IsAuthoritativeActor`、停止、目标替换和生命周期代码没有改变。

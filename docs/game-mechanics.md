@@ -14,7 +14,7 @@
 
 原失败点(2103,295)的现场检查为Grass，上方(2103,294)是Trees，isTreeTrunk=true、frameX=0、frameY=132，CanKillTile=false。本机WorldGen.CanKillTile的树干支撑分支返回false；Player.PickTile随后将本次挖掘伤害置0，因此会按冷却挥镐但既不变泥土也不移除。该规则也见 [Official Terraria Wiki 方块说明](https://terraria.wiki.gg/wiki/Block)，API见 [WorldGen文档](https://docs.tmodloader.net/docs/stable/class_world_gen.html)。修复遵守该规则，未强制移除树或支撑。
 
-2026-10-22 新增 `/tpa equip pick`，向AI slot1发放测试铜镐（CopperPickaxe，item=3509，pick=35），保留slot0原有测试剑。这是单人开发物资；2026-11-16 批次3已在多人服务器 Spawn 按普通经典三件初始化（待实机），单人历史流程不变。
+2026-10-22 新增 `/tpa equip pick`，向AI slot1发放测试铜镐（CopperPickaxe，item=3509，pick=35），保留slot0原有测试剑。这是单人开发物资；2026-11-16 多人服务器 Spawn 现已实测按普通经典三件初始化，单人历史流程不变。
 
 普通挥动镐接入本机 `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile`；前两层跳过额外玩家槽位的归属检查作有限适配。工具目标 `Player.tileTargetX/Y` 是共享静态字段，只在本次原生范围检查和挖掘方法调用内替换，并用 finally 恢复；不切换 Main.myPlayer，不写真人鼠标位置。`IsTargetTileInItemRange` 和 `PickTile` 签名见 [tML Player 文档](https://docs.tmodloader.net/docs/stable/class_player.html)，本机IL摘录保存在被Git忽略的 `.local/research`。
 
@@ -24,9 +24,9 @@
 
 | 名称 | 本机 ItemID | 项目实际用途与状态 |
 | --- | --- | --- |
-| 铜短剑 Copper Shortsword | `CopperShortsword = 3507` | 普通新角色初始武器；批次3多人服务器 Spawn 已发放（离线，待实机），单人仍不自动发放；批次4已按原生刺击 projectile 路径适配（离线，待实机） |
+| 铜短剑 Copper Shortsword | `CopperShortsword = 3507` | 多人经典发放、默认选中、刺击剑身与固定傀儡原生命中已验；单人仍使用历史测试物资 |
 | 铜阔剑 Copper Broadsword | `CopperBroadsword = 3508` | 与铜短剑是不同物品；本项目未验证 |
-| 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | 单人 `/tpa equip iron` 测试装备已实测；批次5多人 `/tpamp equip iron`（需服务端测试开关）为隔离测试物资，普通挥砍离线、待实机 |
+| 铁阔剑 Iron Broadsword | `IronBroadsword = 4` | 多人隔离夹具下确认史莱姆击杀和同一傀儡的重复挥砍；单人测试装备也已有实测 |
 | 木剑 Wooden Sword | `WoodenSword = 24` | `/tpa equip wood` 额外发放的测试装备，已实测命中恶魔眼 |
 
 本机依据：tML 2026.08.3.0 程序集（本次离线核对使用 `.local/tml/2026.08.3.0` 副本，原安装目录为 `F:\SteamLibrary\steamapps\common\tModLoader`）中 `Terraria.ID.ItemID` 常量；`UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty` 的普通初始武器发放使用 3507／3509／3506 并各调用 `Prefix(-1)`。`Player` 构造函数初始化背包物品对象，但不执行建角发装备流程；批次3的 `DemoPlayerSystem.Spawn` 只在多人服务器、发布 actor 之前调用 `StartingInventory`，只发放普通经典三件，失败不留下 AI；单人仍由 `Equip` 向 slot 0 发放测试剑。
@@ -66,8 +66,8 @@ Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Sho
 
 | 类型 | 代表物品 | 原生物品使用路径 | 关键输入／资源 | 关键归属或客户端条件 | 当前 AI 支持 |
 | --- | --- | --- | --- | --- | --- |
-| 普通挥砍 | Iron Broadsword（4） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC` | `controlUseItem`；无弹药；原生冷却 | `Main.myPlayer` 两处门控；dedServ 近战框使用 `itemLocation` | 批次5 离线接入（受限测试物资） |
-| 短剑刺击 | Copper Shortsword（3507） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_Shoot → CopperShortswordStab(938)` | `useStyle=13`、`shoot=938`、`noMelee=1`；无弹药；原生冷却 | `ItemCheck_Shoot` 非本地早退；服务器射弹 owner | 批次4 离线接入 |
+| 普通挥砍 | Iron Broadsword（4） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC` | `controlUseItem`；无弹药；原生冷却 | `Main.myPlayer` 两处门控；dedServ 近战框使用 `itemLocation` | Host & Play 已验证（隔离测试物资） |
+| 短剑刺击 | Copper Shortsword（3507） | `ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_Shoot → CopperShortswordStab(938)` | `useStyle=13`、`shoot=938`、`noMelee=1`；无弹药；原生冷却 | `ItemCheck_Shoot` 非本地早退；服务器射弹 owner | Host & Play 已验证 |
 | 弓箭 | Wooden Bow（39） | `ItemCheck_Shoot → PickAmmo → projectile` | 弓与箭 `useAmmo`；消耗箭 | `ItemCheck_Shoot`／瞄准；弹药库存 | 未实现，仅研究 |
 | 魔法 | Wand of Sparking（3069） | 原生使用 → `ItemCheck_Shoot` → 魔法 projectile | 魔力检查／消耗；瞄准 | 客户端使用样式、魔力、射弹 owner | 未实现，仅研究 |
 | 召唤 | Slime Staff（1309） | 原生使用 → minion 生成／召唤物所有权 | 魔力；召唤槽 | `ItemCheck_MinionAltFeatureUse` 等特殊分支 | 未实现，仅研究 |
@@ -78,4 +78,6 @@ Wiki 查阅入口：[Copper Shortsword](https://terraria.wiki.gg/wiki/Copper_Sho
 - 普通挥砍与铜短剑可以共用：`IsAuthoritativeActor` 身份保护、`DemoPlayerSystem.Attack` 输入时长、Stop／Remove／死亡／目标替换清理、`Snapshot` 和 `combatEvents` 观察。
 - 两者不能共用同一条命中适配：普通挥砍需要 `ItemCheck_OwnerOnlyCode` 的直接近战门控，铜短剑需要 `ItemCheck_Shoot` 的射弹门控；命中记录也分别是 `item-hit` 与 `projectile-hit`。
 - 当前仍保留两个受限 ID：`IronBroadsword` 和 `CopperShortsword`。这是为避免把尚未验证的武器一次性开放，不是长期 registry；后续只有在同一机制实机通过后才考虑扩大范围。
-- 普通挥砍的 dedServ 命中框、`ProcessHitAgainstNPC` 的服务器 Hook 触发和实际伤害都尚未实机验证；不能把本批离线契约通过写成“服务器 AI 已能挥剑命中”。
+- 专用服务器的铁阔剑复用原生挥砍姿势计算和 `UpdateMeleeHitCooldowns`，并避开专属客户端的乐器逻辑。同一个固定傀儡在多条攻击指令下重复触发原生 `item-hit`。
+- 铜短剑的横向输入替代专用服务器没有有效操作者的鼠标瞄准。服务器跟踪发射该射弹的 `Player` 对象，放行 NPC 原生命中并广播 `SyncProjectile`。客户端采用原生刺击射弹绘制剑身。
+- 原生 `UpdateBuffs` 倒计时和玩家更新中的到期清除限权威 AI 放行。本机程序集已验证。拾取复用 `GrabItems`／`PickupItem` 并广播地面堆叠变化；Host & Play 已确认墓碑入包。

@@ -19,7 +19,7 @@ flowchart LR
 
 ## 多人角色与显示
 
-`Commands/MultiplayerProbeCommand.cs` 提供独立 `/tpamp` 命令，经 Mod.HandlePacket 转交 `Common/MultiplayerProbe.cs`。服务器执行生成、限时移动、队伍和清理，每 6 tick 向客户端发送位置／速度／方向／队伍／生命及当前持有物；客户端创建显示镜像。服务器对虚拟槽位跳过无连接清理分支，不暂时切换 active；发往该空连接槽位的原生聊天消息被过滤。IL 分支按运行时 ILLabel 处理，模式变化则拒绝加载，需检查新 tML 版本。
+`Commands/MultiplayerProbeCommand.cs` 提供独立 `/tpamp` 命令，经 Mod.HandlePacket 转交 `Common/MultiplayerProbe.cs`。服务器执行生成、限时移动、队伍和清理，每 6 tick 向客户端发送位置／速度／方向／队伍／生命、当前持有物和物品动画；客户端创建显示镜像。服务器对虚拟槽位跳过无连接清理分支，不暂时切换 active；发往该空连接槽位的原生聊天消息被过滤。IL 分支按运行时 ILLabel 处理，模式变化则拒绝加载，需检查新 tML 版本。
 
 当前一名真人场景已通过基础角色、平滑、清理、接触受伤／死亡／重生及中文短目标；AI不是实际网络客户端。第二真人、存活服务器断线和占槽冲突仍待验证。`/tpa` 命令入口仍限单人；JSON 邮箱按模式分工，并非全部只支持单人。命令与证据见 [多人探针](multiplayer-probe.md)。
 
@@ -38,7 +38,8 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
 | Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像、有界平滑和持有物显示；不复制怪物选敌逻辑 |
 | Common/NativeCombat.cs、MultiplayerAttackPolicy.cs、CombatHitProbe.cs | 服务器权威 AI 的铜短剑原生刺击 projectile 与 Iron Broadsword 直接近战适配；手动 `/tpamp attack` 的身份／物品／时长校验；服务端记录原生 projectile／item 命中，不伪造伤害 |
-| Common/StartingInventory.cs、StartingKit.cs、HeldItemWire.cs | 多人服务器 Spawn 时按普通经典三件经 `PlayerLoader.GetStartingItems`／`SetStartInventory` 初始化一次，失败不发布 AI；持有物包字段只用于客户端显示，服务器仍是权威 |
+| Common/StartingInventory.cs、StartingKit.cs、HeldItemWire.cs | 服务器按经典三件初始化一次，失败不发布 AI；客户端镜像选中物与原生物品动画状态 |
+| Common/NativePlayerInteractions.cs | 只对服务器权威 AI 放行原生 Buff 倒计时、到期清理和掉落入包；使用原生物品包同步地面变化 |
 | Common/MultiplayerAgentBridge.cs | 显式只读／动作开关、目标收发、身份校验、短移动白名单、回执过滤 |
 | Common/MultiplayerGoalAcceptance.cs、agent/acceptance.py | 有界开发验收：真实接单后替换、移动开始后停止、观察60tick；不参与普通决策 |
 | Common/WorldSession.cs | 世界会话标识；进世界生成、退出清空，恢复对账据此拒绝跨世界恢复 |
@@ -66,11 +67,11 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## 原生物品与结果
 
-批次4已离线适配服务器权威 AI 的铜短剑刺击 projectile（`useStyle 13`／`shoot 938`，经 `ItemCheck_Shoot`）；批次5以 Iron Broadsword 为代表，离线放行 `ItemCheck_OwnerOnlyCode` 的直接近战分支，并用 `/tpamp equip iron` 隔离测试物资准备武器（服务端必须开启 `TPA_MP_TEST_EQUIP=1`，默认关闭）。专用服务器 `ItemCheck_GetMeleeHitbox` 使用简化的 `itemLocation` 命中框，实际命中仍待实机。木剑／铁阔剑的本地单路径保留；接触受伤／致死／软核重生已有限放行服务器权威 Actor，要求当前对象／槽位匹配且无真人连接占用；客户端镜像不结算。DemoUpdateProbe 为被跳过的本地交互段补调原生 Update_NPCCollision，不复制伤害公式、命中框或直接扣血。11月13日在 tML 2026.9.3.1 加载和实测通过，不保证其他版本兼容。
+服务器对两种代表性武器有限放行原生路径。铜短剑以横向输入替代鼠标方向，个人射弹仍绑定当前 AI 对象，服务器结算 NPC 命中并广播刺击射弹。铁阔剑使用原生挥砍姿势、近战命中框与近战冷却，验证物资由显式开关隔离。接触伤害与软核重生走原生方法；客户端镜像只参与显示。具体门控和验收见 [游戏机制](game-mechanics.md) 与 [集中清单](acceptance-checklist.md)。
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 
-原生PickTile前后记录坐标、工具、类型／存在性和broken。草地变泥土不算移除，移除不算拾取。库存可观察并选择；equip wood／iron／pick只在开发模式发测试物资。批次3已在多人服务器 Spawn 按普通经典三件初始化一次（`StartingInventory`，待实机），初始化失败不发布 AI；批次4只对手动铜短剑放行原生刺击 projectile（`ItemCheck_Shoot`），不开放 Python 攻击、自动索敌或其他武器。单人历史流程仍不自动发放；木剑／铁阔剑攻击和普通挥动镐可用，斧／锤／钻头等未交付。
+单人原生 `PickTile` 前后记录坐标、工具、类型／存在性和 `broken`。多人起步装备使用 `StartingInventory`，已实测铜短剑、铜镐、铜斧各一件。拾取依赖原生物品预约与背包空间，地面剩余堆叠由原生网络包同步，服务器状态桥可核对入包。多人挖除→掉落→拾取和一般换槽仍待交付。
 
 ## Agent与开发入口
 
@@ -86,4 +87,4 @@ game_actions逐条等输入／当前动画结束，再下发后续动作，按ti
 
 观察包括AI／真人位置、生命、输入、工具、库存、导航、局部地形／矿物候选、附近480像素最近8个敌怪和有界事件。敌怪位置会过时、slot可能复用，列表不覆盖所有弹幕；候选canKill=true也不保证工具强度足够。
 
-当前一真人＋一个AI，单活动短目标，尚非完整玩法同步。多人初始装备已离线实现、待实机；多人主动攻击、可靠拾取、完整寻路、跟随／守位、合成和持久化仍未交付。反编译调查只留被忽略的.local/research，不提交游戏源码／二进制；本项目新增代码使用MIT。
+当前一名真人＋一个 AI，单活动短目标；手动攻击、一次掉落拾取和软核重生已有实机证据。Host & Play 的 Buff 到期、自然装备成长、跟随、合成和持久化仍待验证或开发。本机程序集调查存于被忽略的 `.local/research`，仓库仅提交项目代码和文档。
