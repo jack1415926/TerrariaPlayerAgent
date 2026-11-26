@@ -1,184 +1,68 @@
-# 多人虚拟 Player：运行、协议与验收
+# 多人虚拟 Player 的命令与协议
 
-更新：2026-11-27。一名真人通过 Host & Play 与服务器 AI 已验证中文短目标、初始装备、两种手动武器、固定傀儡重复命中和一次掉落入包。Buff 到期清理通过本机程序集验证，Host & Play 场景待补。第二真人、独立服务器与完整玩家成长分开验收。
+更新于 2026-11-27。下单与启动见 [Agent 运行说明](agent-setup.md)，复测操作见 [测试入口](testing.md)，验收与历史过程见 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md)。
 
-## 范围与运行
+## 启动模式和真人命令
 
-在独立测试多人世界中加载当前构建的模组，真人客户端使用下列命令；服务器也必须加载同版本。不要直接使用当前仍在运行的旧单人程序集。
+客户端和服务器需加载同一次构建。Host & Play 不转发客户端的 `-tpatest`，`play.ps1` 用可继承的进程级环境变量启用服务器功能。
 
-```text
-/tpamp spawn
-/tpamp status
-/tpamp diag
-/tpamp team 1
-/tpamp right 1
-/tpamp attack left 1
-/tpamp equip iron
-/tpamp stop
-/tpamp remove
-```
+| 启动选项 | 服务器行为 |
+| --- | --- |
+| `-MultiplayerBridge` | 设定 `TPA_MP_READONLY_BRIDGE=1`，只读服务器状态 |
+| `-MultiplayerAgent` | 启用只读桥和 `TPA_MP_AGENT=1`，开放目标及受身份约束的动作 |
+| 同时加 `-MultiplayerTestEquip` | 设定 `TPA_MP_TEST_EQUIP=1`，额外开放铁阔剑测试夹具 |
 
-team 为原生数值 0–5；本轮仅验证队伍 1 的当前客户端红队地图／信息显示，未验其他颜色或其他组队效果。左右移动限制 1–10 秒（整数），攻击只允许铜短剑／Iron Broadsword 且最多 1 秒；客户端与服务器均校验。生成者独占控制、离线清理及真实连接占槽时让位已写入代码，仍待实测；其他客户端查询和控制拒绝也待补。
+| 真人命令 | 用途 |
+| --- | --- |
+| `/tpamp spawn`、`remove` | 生成或移除独立 AI，重建会初始化新的经典三件 |
+| `/tpamp status`、`diag`、`combat` | 查看服务器状态、客户端显示统计，或开启 20 秒接触／选敌诊断 |
+| `/tpamp team 0-5` | 设置原生队伍编号 |
+| `/tpamp left/right 1-10` | 手动左右移动，时长用整数秒 |
+| `/tpamp attack left/right [1]` | 手动触发一秒短攻击，支持铜短剑与铁阔剑 |
+| `/tpamp equip iron` | 通过显式测试夹具发放铁阔剑 |
+| `/tpamp goal <文本>`、`stop` | 由生成者提交新目标或取消正在执行的目标 |
 
-服务器执行原生玩家输入，每 6 tick 推送位置、速度、朝向、队伍、生命、选中物品与物品动画。客户端镜像负责表现，反馈走聊天回包。铜短剑剑身通过原生 `SyncProjectile` 显示。铁阔剑夹具需要服务端 `TPA_MP_TEST_EQUIP=1`，默认关闭。
+真人的 `/tpamp` 与宿主工具里的 `/tpa` 字符串是不同入口。Host & Play 由游戏启动本地服务器，常规试玩无需另开进程占用端口。
 
-本机默认由用户使用“开服并游玩”，助手启动脚本只启动客户端；不要同时再开独立服务器占用端口。需要专门验证生成者离线且服务器存活时，另行安排持久服务器或让非房主成为生成者。
+## 服务器身份与目标生命周期
 
-## 固定傀儡回归（2026-11-27）
+服务器将 AI 放入无真人连接占用的 Player 槽位，由引擎按常规循环更新。生成者的服务器 Player 对象与当前 Socket 共同决定控制权；客户端镜像负责显示。目标和动作请求校验世界 `worldSession`、AI `actorGeneration`、`controllerToken`、`hostSession`、`goalId` 和 `stopRevision`。成功生成、实际移除和原生重生会更新 generation。
 
-通过 [多人实测步骤](testing.md) 使用固定傀儡回归，服务器分别记录铜短剑的 `projectile-hit` 与铁阔剑的 `item-hit`。右侧同一傀儡已记录四轮铜短剑和两轮铁阔剑重复命中；用户确认铜短剑剑身可见。攻击命令最长1秒，到时结束。测试中途取消时使用 `stop`。
+新目标替换旧目标并清除旧输入。真人停止、移除、死亡、重生、控制者失效、换世界和宿主身份变化均使旧动作失效。已发出的模型请求可能继续返回，但结果无法获得新目标的动作权限。
 
-`StateKind` 在 `HeldItemWire` 六字节后追加 `itemAnimation` 和 `itemAnimationMax` 两个 Int32。镜像只应用已接受的快照，死亡时清除动画。服务器与客户端需加载同一次构建。拾取沿用原生预约与背包逻辑，服务端广播地面物品变更，背包通过状态桥观察。
+当前已验证同机一名真人＋一个 AI。第二观察端、活服务器上的生成者离线／重连和真实占槽让位有独立待验项，见 [TODO](../TODO.md)。
 
-## 多人基础验收范围
+## 文件邮箱
 
-本轮一名真人基础项已通过；以下第二观察端、非生成者和存活服务器离线项仍待验，不将代码保护写成实机通过。下一批计划只在 TODO 维护。
+游戏和 Python 默认共享 `.local/tModLoader/TPA`。启动时对照两端打印的绝对邮箱路径。服务器只在 `netMode=2` 消费多人请求，每 3 tick 检查一次；单人桥在多人或收到显式多人请求时不消费该请求。
 
-- 一名真人客户端连入本地服务器，spawn 后看到一个独立 AI，服务器 status 返回不同的槽位；客户端镜像和服务器位置一致。
-- 设置队伍后检查颜色、队伍 UI 和位置提示；不要只以回包文本作成功证据。
-- right 1 后比较服务器实际位移与客户端显示，stop 后主动输入不继续。
-- 第二观察客户端晚加入后看到同一个 AI，而非生成第二个；两端核对 team 和位置。
-- 非生成者控制被拒；remove、生成者退出、退世界后无遗留镜像；真实连接占用探针槽位时让位。
+| 文件 | 方向与作用 |
+| --- | --- |
+| `host-ready.json` | 宿主发布角色与会话。心跳每 5 秒更新，超过 15 秒视为离线 |
+| `goal.json` | 服务器发布最新目标与身份。宿主先原子重命名领取，再读已领取的文件 |
+| `goal-ack-<id>-<status>.json` | 宿主回报接单、拒绝、重复或过期 |
+| `request.json` / `response-<id>.json` | 宿主请求状态或下发动作，服务器回实际状态和处理结果 |
+| `goal-result-<id>.json` | 宿主发送目标终态及简短反馈。同一目标的终态先于心跳退出判定处理 |
+| `.local/test-results/goal-<id>.json` | 按目标保存详细本地报告，常驻宿主可在待机时继续读报告 |
 
-第一轮只验证一名真人＋一个 AI，但跨客户端同步最终必须补第二观察端。可在同一电脑运行服务器与两个客户端，无需两台实体电脑。
+宿主用文件锁防止双宿主，启动时先处理遗留目标，再发布心跳。只读 `status` 无需活动目标；写入动作必须通过当前目标身份检查。只读快照里 `player=null`，AI 移除后 `actor=null`，命令行 Probe 会明确报无 AI。
 
-## 首次构建证据（历史）
+## 固定傀儡目标与证据
 
-C# 编译及隔离目录打包通过，0 警告 0 错误。普通构建因运行中 tmod 文件被占用而打包失败，未改写该历史失败。隔离包输出到 `.local/mp-build/Mods/TerrariaPlayerAgent.tmod`；正式加载前退出旧测试实例，再运行正常构建。尚无多人运行、移动或队伍成功证据。
+宿主每轮提供最新的结构化观察，模型一次选一个动作。普通多人目标可读状态、左右短移和停止。固定靶目标额外支持 `/tpa approach` 和手持铜短剑的左右短刺击。服务器开始时绑定最近且已激活的固定靶；全过程核对该 NPC 的槽位、对象与摆放位置。
 
-## 首轮实机与修复状态（历史，2026-11-10）
+`approach` 在同层复用原生水平移动和减速停步，最多 3 秒。每个目标最多 6 轮模型请求、3 次攻击尝试。铜短剑射弹继承创建时的攻击序号，服务器用序号与靶身份匹配本轮 `projectile-hit`，首次有效命中即停手。
 
-用户确认生成、当前客户端红队地图／队伍信息显示、移除通过；移动失败，停止因静止前提未通过验收。移动状态累计更新仅 1 次。已根据本机连接维护逻辑新增虚拟槽位 active 保护及聊天空连接过滤；编译打包通过，尚未加载复验。下一次先检查更新计数与短距离移动，再在移动中 stop；不以停止静止角色作为取消成功。详细历史见 validation.md。
+- `succeeded` 表示服务器已确认该目标的游戏证据。
+- `finished` 表示模型结束了普通短目标，事实结果以动作记录为准。
+- `unconfirmed`、`budget_exhausted`、`interrupted`、`unknown`、`failed` 分别区分未确认、预算用尽、取消或身份变化、动作结果不明、执行失败。
 
-## 基础验收证据（历史，2026-11-10）
+铁阔剑和换槽仍属于手动或后续能力。同一目标中明确提出已识别的换武器／阔剑要求时，服务器在接单前拒绝。手动武器的原生差异见 [游戏机制](game-mechanics.md)。
 
-修正连接清理保护和 ILLabel 加载问题后，用户确认按秒移动、遇坎自动跳跃及清理回归成功。服务器日志记录 right 3 位移约 434 像素；left 9 在约 4.2 秒收到 stop，随后连续采样输入清零、速度为零、位置稳定。最终 remove → status 返回 No demo → spawn → remove 均有服务器回包与用户观察，当前 AI 已移除。本轮使用 HERO 设为中午并关闭刷怪，不证明战斗／生存规则。
+## 客户端显示同步
 
-11月10日当时的范围调整：先做好一名真人＋AI，先做移动同步的离线诊断；第二观察客户端、权限、存活服务器离线及占槽验证延后。当时多人战斗、挖掘、复活、保存与自然语言入口尚未迁移。后续已完成的平滑、受伤／重生和短目标以本文当前摘要及11月13日批次为准，不把历史计划当成当前待办。
+服务器每 6 tick 发送位置、速度、方向、队伍、生命、序号、tick 和瞬移标记。`StateKind` 接着发送六字节 `HeldItemWire`（槽位、类型、修饰词、数量）以及两个 Int32 动画字段 `itemAnimation` 和 `itemAnimationMax`。客户端仅应用已接受的快照，并用原生射弹消息显示铜短剑剑身。
 
-## 显示同步与诊断（2026-11-11 离线开发）
+`DisplaySync` 保留 12 条快照，使用 120 ms 播放延迟、最多 150 ms 外推和 0.5 秒无包判 stale。速度单位为像素／模拟 tick；位置在外推上限后冻结，恢复时以 600 px/s 限速收敛。服务器按相邻已发送位置比较 96 px 阈值并标记瞬移，客户端据标记重置缓冲。服务器 tick 用于诊断，当前播放依据接收时间。
 
-原有目的：服务器持有权威 `Player`，客户端只放一个显示用镜像，每 6 tick 收到一次位置／速度后直接覆盖 `mirror.position`。这样权威性清楚、实现最少；代价是客户端两次包之间（约 100 ms）镜像会继续走原生 `Player.Update`，下一包又把位置拽回，形成可见锯齿。镜像是一个 `active` 的 `Player` 放进 `Main.player[]`，客户端会按正常玩家路径更新它；这一点由现有镜像实现和 `PostUpdatePlayers`（tModLoader 文档：Players 更新之后调用）推断，**客户端对非本地玩家是否完整跑物理更新尚未实机或反编译确认**。
-
-离线改动只落在显示层：
-
-- 服务器每包追加快照序号与服务器 tick；发送频率仍是每 6 tick，没有靠提高频率掩盖问题。
-- 客户端不再在 `Receive()` 里写位置，只把快照交给 `Common/DisplaySync.cs`：12 条有界缓冲、120 ms 播放延迟、最多 150 ms 外推、0.5 s 无包判 stale、96 px 判瞬移、速度低于 0.05 不外推。旧序号和重复序号直接丢弃，绝不让旧快照覆盖新状态。
-- 瞬移／重生识别：服务器在固定 6 Tick 发送节奏上比较“本次与上次已发送位置”，超过 96 px 就在包尾 flags 里置位；客户端只认这个显式标记，不再拿跨断流的距离猜。标记缺失时（旧协议或离线快照）退化为“只在正常节奏到达且距离超过 96 px 时判瞬移”。断流期间发生的显式传送仍立即重置缓冲；断流期间没有标记的大位移走限速恢复。
-- 单位：`Player.velocity` 是世界单位／模拟 Tick，不是像素／秒；按 Terraria 的 60 Tick/s 换算，150 ms 上限对应 9 Tick。外推目标是 `renderTime − 最新快照接收时间`（不是 `now − 接收时间`），所以 120 ms 播放延迟不会被额外算进预测。
-- stale 只做标记：超过外推上限后位置冻结在同一预测端点，不会在越过 `StaleAfter` 时退回最后包位置，避免明显跳变。停止时速度低于阈值直接收敛到权威位置。
-- stale 恢复：只有断线超过 `StaleAfter` 后重新收到快照才进入“重同步”：显示按 `MaxCorrectionSpeed = 600 px/s`（60 fps 下每帧约 10 px）向新目标收敛，差距小于一步时精确落位；正常回放、首次采样、瞬移重置仍直接赋值，不给普通移动平添延迟。这样恢复时不会从预测端点瞬间跳回旧位置，约 30 px 的偏差需要几十毫秒收敛。
-- `ServerTick` 目前只用于诊断，不参与时间轴：缺少服务器 Tick 与客户端墙钟的可靠对齐证据，且 Tick 计数会在服务器重启后归零。先用“接收时间回放”；若实机显示抖动与网络节拍相关，再评估用相邻快照的 `Δtick / Δ接收时间` 估计速率。
-- 固定 60 Tick/s 的局限：服务器若因卡顿实际降速，墙钟外推会超前，最多 9 Tick 后冻结；`stale` 与外推计数可暴露这种情况。是否改成自适应 Tick 速率需要实机数据，本批不引入。
-- 120 ms 延迟对停止的影响：位置会精确停在权威停止点（速度低于阈值不外推），但“停下来”的视觉时刻比服务器晚约 120 ms；是否可接受需要人眼确认，缩短延迟会牺牲插值余量。
-- 诊断计数按当前镜像实例统计：移除、换槽、退世界触发清镜像时会归零，`/tpamp diag` 看到的是这一实例的数据。
-- `PostUpdatePlayers()` 在客户端每 tick 采样并写 `mirror.position`，速度仍取最新权威值；服务器位置、速度、碰撞、移动输入、动作时长、stop 归属、控制权与槽位规则均未改动。
-- 槽位变化、`slot=-1`、退世界、清镜像时一并重置显示缓冲；瞬移（重生／传送）会丢弃旧缓冲，不跨瞬移插值。
-- 诊断有界：接收／重复／乱序／外推／stale／瞬移计数，以及最近 64 条校正量（序号、服务器 tick、接收时间、位移量）；`/tpamp diag` 打印摘要与最近 5 条，不写日志文件、不无限累积。
-
-离线证据（尚未实机）：`dotnet run --project tools/DisplaySync.SelfCheck -c Release` 的 110 项回放检查通过，覆盖正常移动、停止、方向反转、不规则间隔、延迟与丢包、乱序／重复、瞬移、重置、历史有界、px/tick 换算、120 ms 延迟生效、150 ms／9 Tick 外推上限、stale 前后位置连续、移动中突然停止不越界、stale 后恢复（落后／领先、速度反向、恢复后立即停止、连续断线），以及本轮新增的瞬移对照（正常节奏显式瞬移立即重置、未标记的大位移不重置、断流中显式传送仍立即重置、显式“未传送”走限速恢复）；模组构建 0 警告 0 错误。回放只证明纯逻辑，不证明游戏画面已平滑。
-
-实机复验时应先看 `/tpamp diag` 的校正量与 stale／外推计数，再看画面是否仍抖；如果客户端实际不会给镜像跑物理更新，锯齿假设不成立，平滑仍正常但收益会变小。
-
-## 服务器只读桥与 Probe（批次 1，2026-11-11）
-
-批次 1 只打通“Python 能读到服务器 AI 的权威状态”，不开放目标与动作。
-
-- `Common/MultiplayerAgentBridge.cs`：服务器侧 ModSystem，在 `PostUpdateEverything` 里每 3 tick 轮询一次邮箱；**只有 `Main.netMode == NetmodeID.Server(2)` 才消费**，客户端不消费。只接受 `status`，其他命令直接拒绝；响应为 `response-<id>.json`，`state` 字段即服务器快照。
-- 服务器快照字段：`agentMode="multiplayer_server"`、`netMode=2`、`worldSession`、`stopRevision`、`tick`、`gameMenu`、`paused`、`focused=null`、`player=null`、`actor`（沿用 `DemoPlayerSystem.Snapshot()` 的完整字段，并新增 `active`、`generation`）。
-- `actor.generation`：Spawn 成功 +1，实际移除 Actor +1，`ModPlayer.OnRespawn`（XML 文档写明服务器也会调用）触发 +1；重复 Remove、失败 Spawn 不递增。generation 与 worldSession 一起标识 AI 实例生命周期。
-- `LocalTestBridge.Poll()` 增加 `netMode != SinglePlayer` 直接返回；与服务器桥互斥，同一目录不会双消费。
-- Python `--probe --agent-mode multiplayer_server`：只发一次 `status`，不读 `goal.json`、不调模型、不执行动作；校验 `netMode=2`、`agentMode`、`player=null`、`actor.slot/generation` 后打印摘要退出。`--probe` 与 `--host`／`--goal`／`--stop`／`--check-api`／`--max-goals`／非默认 `--goal-file` 冲突会在启动前报错；`multiplayer_server` 在批次 1 必须配合 `--probe`。
-- 邮箱路径：Python 启动打印 `Mailbox: <绝对路径>`；两个 C# Bridge 在 `OnModLoad` 记录 `[TPA]`／`[TPA-MP] mailbox=<绝对路径>`。二者必须一致（`play.ps1` 把 `-tmlsavedirectory` 指向 `.local/tModLoader`）。
-
-离线证据：61 项 Python 测试通过（新增模式校验、probe 只发 status、冲突参数、`actor.generation` 等 10 项）；用假服务器桥做了一次文件协议烟测，probe 输出服务器快照、单模拒绝 netMode=2、冲突参数被拒；C# 构建 0 警告 0 错误。尚未实机。
-
-### Host & Play 显式启用只读桥（2026-11-13）
-
-“开服并游玩”创建的服务器不会转发客户端的 `-tpatest`。需在启动客户端时显式启用可继承的只读开关：
-
-```powershell
-.\scripts\play.ps1 -MultiplayerBridge
-# 开服进入测试世界并执行 /tpamp spawn 后：
-.\scripts\run-agent.ps1 -Probe -AgentMode multiplayer_server
-```
-
-`-MultiplayerBridge` 仅给新游戏进程设置 `TPA_MP_READONLY_BRIDGE=1`，由其创建的服务器继承；不改用户／系统环境变量。未设置环境变量且无 `-tpatest` 时桥默认关闭；原有服务器 `-tpatest` 方式仍保留。PowerShell 7 的 `Start-Process -Environment` 为启动器依赖（本机已验证支持）。
-
-此开关只启用 `MultiplayerAgentBridge`，不启用单人 `LocalTestBridge`，不开放目标或动作。客户端即便继承开关也不消费邮箱；只有 `netMode=2` 的服务器处理 `status`。独立服务器可给自身设置同一个进程级环境变量，Python 必须运行在能访问该服务器邮箱的机器上；本批不增加远程协议或邮箱路径配置。
-
-检查服务器日志中的 `[TPA-MP] mailbox=...` 是否与 Python 的 `Mailbox: ...` 一致。AI 移除后原始状态应为 `actor=null`（要求有 AI 的 Probe 会明确失败）；重建后 `generation` 增加，同一世界重开后 `worldSession` 应变化。实际本轮验收结果见 validation.md。
-
-2026-11-13 本机 Host & Play 已通过上述检查：服务器 slot 254、generation 1→3，世界重开后 worldSession 改变、actor=null；实际服务器拒绝动作和目标请求。退回主菜单的过渡期，单人桥可能返回 netMode=0 的状态，Probe 会拒绝，待服务器就绪后再读；不把该状态当成服务器状态。远程客户端及独立服务器未实测。
-
-## 多人短目标宿主（批次 2，2026-11-13）
-
-在只读桥之外显式开放本批短任务：
-
-```powershell
-.\scripts\play.ps1 -MultiplayerAgent
-.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4
-```
-
-进入多人世界后由生成 AI 的真人输入：
-
-```text
-/tpamp spawn
-/tpamp goal 向右走一秒，然后停止，完成后告诉我
-/tpamp stop
-```
-
-`-MultiplayerAgent` 给游戏及其子服务器设置进程级 `TPA_MP_AGENT=1`，并启用只读桥；`-MultiplayerBridge` 继续只读。多人宿主只能从游戏控制者接收目标，不接受命令行 `--goal` 或无身份外部 stop。每个动作仅限左右移动（>0、最多3秒）与停止，模型和服务器双侧校验；不开放生成、发装备、攻击、挖掘、goto 或跟随。手动 `/tpamp left/right` 会取消当前目标并接管。
-
-游戏即时回复提交结果，随后显示宿主接单、开始移动、任务结束或取消。最终总结仅表示模型结束，实际完成仍看位移和动作记录。无需使用 `/tpamp combat`；该命令只用于前一批战斗诊断。
-
-目标绑定 `worldSession`、`actorGeneration`、`controllerToken`、`hostSession`、目标 id 和 `stopRevision`。控制者身份关联服务器上的真人 Player 对象及当前 Socket；重新连接或重建 AI 后旧身份无效。新目标先停止旧输入，再替换未读目标；旧响应和收尾不能派发到新目标。stop、remove、死亡/重生、断线、世界变化、宿主心跳过期或重启均使旧目标失效。
-
-宿主以 OS 文件锁保持单邮箱单宿主；启动前已有目标先标 stale，再发布 ready 心跳，不依赖文件时间戳推断。模型调用最多一个在途请求：旧请求不能保证在服务端取消或免计费，新目标可取消旧动作，但可能等待旧请求结束才开始下一次请求。待机不请求模型，目标独立预算/历史；本批仍由外部 Python 宿主运行。
-
-多人请求现在带 `agentMode`，主菜单的单人桥会保留它给服务器处理，替代上节批次 1 过渡期可能读到单人快照的行为。单人未标记请求与原有暂停/恢复入口保留。
-
-本批71项仓库内Python检查通过；本机临时DLL检查由40项协议／门控增加到43项（含验收协调器），并非公开可直接复跑的CI套件。构建和实际加载通过。实机中文短目标由用户确认，完整宿主报告为 `.local/test-results/agent-20261113-193551-17a6e7.json`：2目标finished、2目标interrupted，随后宿主退出并删除心跳。
-
-### 自动验收替换与停止
-
-游戏已用 `-MultiplayerAgent` 启动、多人宿主在线且当前无活动目标时，真人只需 `/tpamp spawn`，随后运行：
-
-```powershell
-.\scripts\test-multiplayer-goals.ps1
-```
-
-脚本通过带控制者／世界／AI 身份的开发请求启动有界服务器验收。验收直接复用 `QueueGoal` 和 `StopGoal`：A 接单后替换为 B，确认 B 左移输入开始后立即停止，再观察 60 tick 输入不恢复，并核对两目标的 interrupted 结果。服务器最长等待60秒，脚本最长70秒；不伪造模型响应、移动或伤害，不通过 UI 抢输入时机。它会使用现有真实宿主的两个目标额度；宿主剩余额度不足时先重新启动宿主，避免把预算不足当作功能失败。
-
-报告在 `.local/test-results/acceptance-<id>.json`，服务器原件在邮箱中。失败、死亡或世界变化保留失败证据，不盲目重跑。服务器测试入口与目标动作一样依赖显式 `TPA_MP_AGENT=1`，只读模式不可调用。新增验收协调逻辑也已通过3项真实 DLL 检查，服务器针对性检查合计43项。
-
-2026-11-13 实机报告 `.local/test-results/acceptance-85ea8609a8c1425ba919cce4601b81f6.json` 为passed：A接单后以新版本替换B，B左移输入开始后立即停止，两个结果均interrupted，之后60tick输入未恢复。末次测试默认加载两个辅助模组；具体白天／禁刷怪开关未说明，不推断已生效。收尾报告 `.local/test-results/goal-closeout-1364583f.json` 为AI生命100、存活、无目标／主动输入，宿主心跳已删除。这些是验收时点，不是实时服务状态。
-
-## 起始装备与持有物同步（批次 3，历史实现，2026-11-16）
-
-- 原生依据（tML 2026.08.3.0 程序集）：`new Player()` 的构造不发放物品；正常新角色由 `UICharacterCreation.SetupPlayerStatsAndInventoryBasedOnDifficulty`（私有、UI 入口）按难度写入初始物品。普通经典角色写入 CopperShortsword／CopperPickaxe／CopperAxe（ItemID 3507／3509／3506）并各自 `Prefix(-1)`。随后经公开的 `PlayerLoader.GetStartingItems(player, vanilla, mediumCoreDeath)` 触发 `ModPlayer.AddStartingItems`／`ModifyStartingInventory`，再由公开的 `PlayerLoader.SetStartInventory(player, items)` 清空并放置槽位（超过50件时由原生 StartBag 收纳）。`Player.DropItems_GetDefaults` 是 mediumcore 掉落用的铜制三件，本次未采用。本产品只使用普通经典三件。
-- 实现：`Common/StartingKit.cs` 保存上述经典清单条件，`Common/StartingInventory.cs` 的 `TryApply` 经 `GetStartingItems` 和 `SetStartInventory` 生成，失败时返回异常；调用方此时还没有发布 actor，因此不备份、不恢复旧库存。`DemoPlayerSystem.Spawn` 只在**多人服务器**（`Main.netMode == Server`）发布 actor 之前调用它；失败直接返回错误文本，不修改 `Main.player[slot]`、`previousSlot`、`Actor`、`ActorGeneration`、导航和控制器，因此不会留下半初始化却被报告成功的 AI。Stop、目标替换、status、死亡和 `NativeCombat` 的原生重生都没有第二个调用点。
-- 客户端：`StateKind` 在包尾追加 `HeldItemWire`（selected slot、type、prefix、stack）；客户端只更新镜像选中槽的显示物品，服务器仍是权威；换槽清旧槽，镜像重建后由下一包恢复。修饰词经 `Item.Prefix(int)` 应用，不直接写 `item.prefix`：前者校验 `CanHavePrefixes`／`CanApplyPrefix` 并计算伤害、速度、稀有度等派生值，直接赋值会跳过这些步骤。不改真人背包，不复制完整背包同步。
-- 离线证据：`tools/InventorySync.SelfCheck` 37 项通过（6字节顺序与追加兼容、三件清单、`GetStartingItems` 扩展、失败处理与单一调用点）；C# 构建 0 警告 0 错误；71 项 Python 测试通过。未实机。失败测试是异常注入，且 `Spawn` 的发布顺序由源码契约检查覆盖，不能当作真实游戏已验证。
-- 实机待验：普通经典新角色与 AI 初始物品逐项对照（三件）；客户端手持物及修饰词显示；stop／目标替换／一次原生重生后不重复发放；客户端重建镜像不产生额外物品；其他模组 `AddStartingItems` 是否给 AI 额外物品。
-
-## 多人原生短攻击（批次 4，历史实现，2026-11-18）
-
-- 原生依据（tML 2026.08.3.0 程序集）：`ItemID.CopperShortsword = 3507` 走 `Item.SetDefaults4`，基础模板调用 `SetDefaults1(6)`，结果为 `useStyle = 13`（`ItemUseStyleID.Rapier`）、`shoot = 938`（`ProjectileID.CopperShortswordStab`）、`noMelee = 1`、`noUseGraphic = 1`；3507 再覆盖伤害、使用时间、击退和 `shoot = 938`。因此它**不是**木剑／铁阔剑的直接近战命中，而是原生短剑刺击 projectile。
-- 归属判断：`ItemCheck_Inner` 第一个 `Main.myPlayer` 门控会跳过非本地槽；`ItemCheck_OwnerOnlyCode` 的 `whoAmI == Main.myPlayer` 门控在射弹之后；`ItemCheck_Shoot` 在 `whoAmI != Main.myPlayer` 时只应用物品时间并返回。服务器 AI 要产生原生射弹，必须在保持对象归属的前提下放行 `ItemCheck_Inner` 与 `ItemCheck_Shoot`；`ItemCheck_OwnerOnlyCode` 的射弹调用在前、直接近战门控在后，保持单人规则即可。`NativeCombat` 只对 `IsAuthoritativeActor` 且当前持有铜短剑的服务器 Actor 放行，单人木剑／铁阔剑和挖掘路径不变。
-- 手动入口：`/tpamp attack left|right [1]`（省略秒数默认 1，只允许 1 秒）。`MultiplayerProbeCommand` 发送 `attack_left`／`attack_right` 请求；服务器校验当前控制者、AI 存活、AI 槽位归属／未被真实连接占用、`HeldItem.type == 3507` 和时长，再取消当前目标、递增 `StopRevision`、清除旧输入并调用 `DemoPlayerSystem.Attack`。请求包仍是 `kind + action + int`，`StateKind` 布局未改。
-- 观察：`DemoPlayerSystem.Snapshot()` 的 `attackTicks`、`itemAnimation`、`usingItem` 表示输入和动画状态；`combatEvents` 新增 `attack-input` 与 `projectile-hit`（含 attacker、projectileOwner、projectile、heldItemAtHit、npc、npcType、damage、targetLifeAfter）。`heldItemAtHit` 明确表示命中瞬间的持有物，不代表生成 projectile 的来源武器。`CombatHitProbe` 使用服务端 `GlobalNPC.OnHitByProjectile` 记录 AI 拥有的 projectile 命中；不修改 `NPC.life`，不伪造事件。`ModPlayer.OnHitNPCWithProj` 的 tML 文档标注为客户端命中时调用，因此不作为服务器 AI 的权威记录来源。
-- 生命周期：`Attack` 先 `Stop()`；`Stop` 清 `attackTicks`／输入；`RequestStop`、`Remove`、死亡、重生、手动移动、新目标、控制者失效、真实连接占槽和世界退出都复用既有清除路径。已经开始的单次原生动画允许自然完成。
-- 离线证据：`tools/Combat.SelfCheck` 60 项通过（命令范围、方向、控制者／存活／权威／物品校验，以及 DemoPlayerSystem 清理、目标替换和 NativeCombat 射弹门控的源码契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
-- 实机待验：铜短剑原生刺击 projectile 是否真的生成、`OnHitByProjectile` 是否记录到实际伤害、Stop／替换／重生后是否停止后续输入，以及真人 Player 和客户端镜像是否完全不受归属补丁影响。Python Agent 的 attack 工具本批未开放。
-- 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认 slot0 为 3507 铜短剑 → 在 AI 面朝方向放置／等待一个普通敌怪 → `/tpamp attack left 1`（或在右侧重复）→ 再查 `status` 的 `attackTicks`／`itemAnimation`／`combatEvents` → `/tpamp stop`；随后复验一次重生和一次新目标替换。只有出现原生命中事件与实际伤害，才能记为攻击通过。
-
-## 普通近战挥砍与原生武器研究（批次 5，历史实现，2026-11-18）
-
-- 研究结论见 [游戏机制](game-mechanics.md) 的“原始武器机制研究”：普通阔剑直接近战走 `ItemCheck_OwnerOnlyCode → ItemCheck_MeleeHitNPCs → ProcessHitAgainstNPC → NPC.StrikeNPC`；铜短剑仍走 `ItemCheck_Shoot` 射弹；弓箭、魔法、召唤和鞭子只研究调用链，不开放。
-- 实现：`NativeCombat` 增加 `IsServerSwing`，只对服务器权威 AI、实际持有的 Iron Broadsword（4）且 `useStyle=Swing`、`noMelee=false`、`shoot<=0` 的玩家放行 `ItemCheck_Inner`／`ItemCheck_OwnerOnlyCode`。铜短剑的 `ItemCheck_Shoot` 规则不变；`IsAuthoritativeActor`、停止、目标替换和生命周期代码没有改变。
-- 测试物资：`/tpamp equip iron` 是隔离测试夹具，只允许当前控制者、存活且仍拥有 AI 槽位的权威 Actor；服务器还必须显式设置 `TPA_MP_TEST_EQUIP=1`（Host & Play 用 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动，普通 `-MultiplayerAgent` 不会开启）。回包明确标记“Test fixture only; not normal progression”。它不是正常装备成长，也不能作为后续全武器开放的依据。
-- 攻击入口复用 `/tpamp attack left/right [1]`；`MultiplayerAttackPolicy` 只允许铜短剑（3507）和 Iron Broadsword（4）两种代表物品。普通近战命中由 `DemoUpdateProbe.OnHitNPCWithItem` 记录为 `item-hit`，短剑射弹仍由 `CombatHitProbe.OnHitByProjectile` 记录为 `projectile-hit`；两者都只记录原生事件。
-- 服务器仍只支持水平左右方向，不提供完整二维瞄准；专用服务器 `ItemCheck_ApplyUseStyle_Inner` 会早退，`ItemCheck_GetMeleeHitbox` 使用简化的 `itemLocation` 命中框，必须实机确认。
-- 离线证据：`tools/Combat.SelfCheck` 60 项通过（命令／身份／物品策略、Iron Broadsword 源码规则、equip 夹具校验、既有停止和调用点契约）；InventorySync 37 项、DisplaySync 110 项、71 项 Python 测试通过；C# 构建 0 警告 0 错误。未实机。
-- 实机最少步骤：`/tpamp spawn` → `/tpamp status` 确认初始铜短剑 → 以 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动后 `/tpamp equip iron`（测试夹具）→ 面向普通敌怪 `/tpamp attack left 1` → 查 `item-hit` 的 attacker／item=4／npc／damage／targetLifeAfter → `/tpamp stop`；若需要复验铜短剑，先 `/tpamp remove` 再 `/tpamp spawn` 重新获得普通经典三件。第三、四、五批应在同一次 Host & Play 启动中一起验收。
+`/tpamp diag` 查看当前镜像的接收、重复、乱序、外推、stale、瞬移和校正量。移除、槽位变化或退出世界会重置镜像统计。普通移动显示与停止已有实测；断流／瞬移观感与第二观察端仍待验。

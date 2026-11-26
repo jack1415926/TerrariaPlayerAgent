@@ -1,8 +1,8 @@
 # 当前技术设计与实现
 
-更新：2026-11-18。本文描述当前职责；验收以 [集中清单](acceptance-checklist.md) 和 [验证记录](validation.md) 为准，单人阶段报告保留历史范围。
+更新于 2026-11-27。本文描述当前职责，验收见 [集中清单](acceptance-checklist.md)。
 
-多人已接入服务器权威接触伤害／死亡／软核重生，以及常驻 Python 宿主的中文短目标。生成者通过 `/tpamp goal` 下单，服务器经文件邮箱交给宿主，宿主仅能下发受目标身份约束的左右短移动和停止；反馈经 ModPacket 回到该真人客户端。动作同时匹配世界、AI generation、连接 token、宿主 session、目标 id 和停止版本。客户端镜像只负责显示。批次4仅开放手动 `/tpamp attack` 的铜短剑刺击 projectile；批次5仅额外开放 Iron Broadsword 直接近战（`/tpamp equip iron` 为隔离测试物资）。Python 攻击、自动索敌和其他武器未开放，挖掘适配仍限单人。
+C# 服务器持有 AI 与游戏事实。Python 读取结构化观察，调用 DeepSeek 选择短动作，C# 按目标身份校验后执行。固定傀儡任务沿用原生接近、铜短剑刺击与命中；客户端处理显示与反馈。
 
 ```mermaid
 flowchart LR
@@ -33,14 +33,13 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Common/GroundNavigation.cs | 水平目标、home／活动边界、刹停判断、目标状态和sequence；不计算完整路径 |
 | Common/LocalTerrain.cs | 局部碰撞探测和17×11格观察 |
 | Common/NativeMining.cs | 普通挥动镐原生接入、范围／保护条件、候选、原生PickTile前后事件和取消 |
-| Common/NativeCombat.cs | 起手／近战／致死归属检查的有限适配，以及软核自动重生 |
 | Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱；stop／remove清掉待发目标 |
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
 | Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像、有界平滑和持有物显示；不复制怪物选敌逻辑 |
 | Common/NativeCombat.cs、MultiplayerAttackPolicy.cs、CombatHitProbe.cs | 服务器权威 AI 的铜短剑原生刺击 projectile 与 Iron Broadsword 直接近战适配；手动 `/tpamp attack` 的身份／物品／时长校验；服务端记录原生 projectile／item 命中，不伪造伤害 |
 | Common/StartingInventory.cs、StartingKit.cs、HeldItemWire.cs | 服务器按经典三件初始化一次，失败不发布 AI；客户端镜像选中物与原生物品动画状态 |
 | Common/NativePlayerInteractions.cs | 只对服务器权威 AI 放行原生 Buff 倒计时、到期清理和掉落入包；使用原生物品包同步地面变化 |
-| Common/MultiplayerAgentBridge.cs | 显式只读／动作开关、目标收发、身份校验、短移动白名单、回执过滤 |
+| Common/MultiplayerAgentBridge.cs | 多人目标身份、固定靶绑定、动作校验、原生命中停手和结果优先回送 |
 | Common/MultiplayerGoalAcceptance.cs、agent/acceptance.py | 有界开发验收：真实接单后替换、移动开始后停止、观察60tick；不参与普通决策 |
 | Common/WorldSession.cs | 世界会话标识；进世界生成、退出清空，恢复对账据此拒绝跨世界恢复 |
 | Common/NativeChatInput.cs、EnterDiagnostics.cs | 开发输入诊断及固定聊天探针，不是任意文本输入工具 |
@@ -57,9 +56,9 @@ PreUpdatePlayers先清除旧输入，再施加本次移动、跳跃、向下或�
 
 stop取消主动输入，不强制速度归零或冻结动画。remove／退出世界恢复仍由AI占据的槽位，清除范围和角色；不持久化AI。死亡清旧动作，软核AI原生倒计时到零后，有限补调FindSpawn、CheckSpawn、Spawn(ReviveFromDeath)，保留同一对象和背包；remove取消该对象的重生资格。
 
-## 单人目标移动与边界
+## 原生水平接近与活动边界
 
-GroundNavigation只管水平世界像素X（actor.x），不接收方块列号。goto／home默认最多10秒，误差8像素内、落地且低速才arrived。依据当前水平速度与runSlowdown提前释放输入，利用原生摩擦减速；受阻、超时、取消与到达分开，本次sequence防止旧结果被误用。
+`GroundNavigation` 控制水平世界像素 X，误差 8 像素内、落地且低速才确认到达。按当前速度与原生减速提前释放方向。单人 `goto/home` 默认最多 10 秒；多人固定靶 `approach` 在同层使用该收敛逻辑，最多 3 秒。每次导航序号区分到达、受阻、超时和取消。
 
 range 1–100格以当前AI的X建立home和左右边界，off解除；设置会取消旧任务并递增停止版本。旧定时移动和方向跑跳也受本地边界约束，范围外目标拒绝；普通stop不清范围，移除／退出清除。模型白名单不开放range；探索模板由宿主在开始时建立25格范围。
 
@@ -75,16 +74,16 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 ## Agent与开发入口
 
-Python通过request.json及唯一response-id.json与游戏线程交换。单人 stop.json 独立优先处理；多人动作和带目标身份的停止走 request.json，真人 `/tpamp stop` 直接在服务器取消。stopRevision变化取消旧任务，旧收尾也不能覆盖新任务。多人请求标 agentMode，主菜单的单人桥不消费。
+Python 与游戏线程的文件与身份字段见 [多人协议](multiplayer-probe.md)。真人停止在服务器直接生效，宿主收尾通过原目标身份申请清除输入。
 
 API请求在网络线程运行，游戏请求由宿主串行处理。等待API时仍检查取消；迟到响应不继续动作，但不承诺服务端请求被取消或不计费。工具仅开放受限命令，不接受任意shell或代码。
 
-game_actions逐条等输入／当前动画结束，再下发后续动作，按tick而非仅墙钟等待。被拒／受阻等情况停止本批后续动作；goto／home和挖掘各核对本次实际证据。自定义自然语言目标没有通用全游戏自动验收器；model_finished仅表示模型正常结束，任务目标仍需事实核对。
+多人每轮选一个工具动作，宿主等实际输入结束或首次匹配命中，再提供最新观察。固定靶成功需要服务器匹配攻击序号与靶身份的原生命中；普通目标的模型结束只记录流程状态。逐目标报告保留观察、动作与证据。
 
 单人历史实测失焦时入口／世界可能停止响应；不能直接套到多人服务器。宿主区分暂停、tick冻结、请求未执行、结果未知与取消，恢复先对账、不盲目重放；未获stop确认保留stop_error。完整失焦恢复仍待实机，短目标成功不代表长期后台游玩已支持。
 
 ## 观察与边界
 
-观察包括AI／真人位置、生命、输入、工具、库存、导航、局部地形／矿物候选、附近480像素最近8个敌怪和有界事件。敌怪位置会过时、slot可能复用，列表不覆盖所有弹幕；候选canKill=true也不保证工具强度足够。
+服务器快照保留位置、生命、输入、库存、导航、地形、附近敌怪和有界事件。多人模型只接收当前目标必要字段、已选动作结果与预算；控制者和宿主令牌留在本地协议。固定傀儡是独立目标字段。
 
-当前一名真人＋一个 AI，单活动短目标；手动攻击、一次掉落拾取和软核重生已有实机证据。Host & Play 的 Buff 到期、自然装备成长、跟随、合成和持久化仍待验证或开发。本机程序集调查存于被忽略的 `.local/research`，仓库仅提交项目代码和文档。
+交付范围为一名真人＋一个 AI。已验证场景见 [集中清单](acceptance-checklist.md)，后续开发见 [TODO](../TODO.md)。本机程序集调查存于被忽略的 `.local/research`。

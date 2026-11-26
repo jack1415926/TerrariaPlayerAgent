@@ -4,6 +4,12 @@
 
 更新：2026-10-22。当前基础闭环结论见 [阶段性验收](milestone-acceptance.md)，历史证据见validation.md；以下提供手动调试入口，未测项不视为通过。
 
+## 多人 Demo 快速定位
+
+- 游戏提示 `Start run-agent.ps1…` 时先看宿主是否在线、是否在 `-MaxGoals 1` 接完一单后退出。常驻启动方式见 [Agent 运行说明](agent-setup.md)。
+- 用 `play.ps1 -MultiplayerBridge` 启动只读会话，进入世界生成 AI 后运行 `run-agent.ps1 -Probe -AgentMode multiplayer_server`。核对两端邮箱绝对路径、`netMode=2` 与当前 AI generation。
+- 目标失败先查 `.local/test-results/goal-<ID>.json`，再用同一目标 ID 对照服务器日志。固定靶命中看 `projectile-hit`；客户端显示单独观察。出现「没有发现已激活的固定傀儡」时，确认真人靠近且 AI 在 480 像素内。
+
 ## 1. 从哪里开始
 
 - 项目：`F:\codex_project\TerrariaPlayerAgent`。

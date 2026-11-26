@@ -1,6 +1,6 @@
 # Agent接入与运行
 
-更新：2026-11-27。原生中文聊天短目标、反馈和替换／停止已经过 Host & Play 实测。铜短剑、铁阔剑的手动攻击及掉落入包也已有实机证据。Python 仍只下发短移动和停止；单人历史入口另行保留。当前证据见 [集中清单](acceptance-checklist.md)，计划见 [TODO](../TODO.md)。
+更新于 2026-11-27。本文提供 Agent 操作与配置，验收结果见 [集中清单](acceptance-checklist.md)，邮箱和状态口径见 [多人协议](multiplayer-probe.md)。
 
 ## 配置与准备
 
@@ -19,18 +19,28 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 默认通过 `scripts/play.ps1` 启动独立配置，加载项目模组、Cheat Sheet、HERO's Mod，不另用只加载项目模组的手动启动方式。角色／世界只用专用测试存档，AI退出世界不保存；辅助开关按实际记录。
 
-## 多人短目标与自动验收
+## 多人启动与固定傀儡 Demo
 
 ```powershell
 .\scripts\play.ps1 -MultiplayerAgent
-.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4
+.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 6
 ```
 
-“开服并游玩”进入测试世界后输入 `/tpamp spawn`，再用 `/tpamp goal <自然语言目标>` 下单、`/tpamp stop` 取消。每次移动最多3秒，目标由当前生成者控制，新目标替换旧目标。当前不接受多人命令行 `-Goal` 或无目标身份的外部 `-Stop`。一邮箱一宿主，示例4目标后退出，待机不请求模型；每目标预算和历史独立。
+通过「开服并游玩」进入独立测试世界。持续游玩时省略 `-MaxGoals`，宿主按目标处理，空闲时待命。单次验收加 `-MaxGoals 1`，接完一单退出。后续出现 `Start run-agent.ps1…` 时，确认宿主窗口与心跳。
 
-多人服务器生成 AI 时先初始化经典三件。当前控制者可手动 `/tpamp attack left/right [1]`。铁阔剑的隔离夹具需 `play.ps1 -MultiplayerAgent -MultiplayerTestEquip`（服务端 `TPA_MP_TEST_EQUIP=1`）。普通手动武器和拾取测试可脱离模型宿主进行，步骤见 [测试入口](testing.md)。
+### 固定傀儡任务
 
-宿主已启动、无活动目标、AI活着且剩余至少2目标额度时运行 `scripts/test-multiplayer-goals.ps1`。脚本按服务器事件完成替换与停止，不能同时人工操作；报告在 `.local/test-results/acceptance-<id>.json`。只读排查用 `play.ps1 -MultiplayerBridge` 与 `run-agent.ps1 -Probe -AgentMode multiplayer_server`，不开放动作。模式／身份字段与有界诊断见 [多人协议](multiplayer-probe.md)。
+在平地让默认持铜短剑的 AI 与傀儡隔开几格，距离最多 480 像素，真人靠近使傀儡激活。先 `/tpamp spawn`，再提交目标。
+
+```text
+/tpamp goal 靠近傀儡，用手上的铜短剑打中一次，然后停下告诉我结果
+```
+
+模型每轮读入最新的结构化位置和动作结果。任务选定最近的已激活傀儡，同层靠近最多 3 秒，使用手上的铜短剑。每目标最多 6 轮模型请求和 3 次攻击尝试。服务器确认本轮刺击命中后停手。主动取消时输入 `/tpamp stop`。
+
+完成、中断或失败都立即生成 `.local/test-results/goal-<目标ID>.json`，包含每轮发送给模型的观察、工具返回、动作时间窗、失败原因与确认的命中。宿主继续待命时也可读该报告。
+
+手动武器、拾取和自动替换／停止的复测方式见 [测试入口](testing.md)。只读排查方式见 [调试说明](debugging.md)。
 
 单在途模型请求会限制线程积累；旧请求可能仍在服务端执行／计费，新目标有时要等它返回才能开始模型调用。取消旧输入与取消服务端请求是两件事。
 
@@ -53,7 +63,7 @@ explore.md包含教程和有限探索／挖掘目标。宿主在调用模型前�
 .\scripts\run-agent.ps1 -HostMode
 ```
 
-宿主每0.2秒检查`.local/tModLoader/TPA/goal.json`；有目标就以该文本执行一轮，写完`goal-ack-*`和`goal-result-*`后回到待机。没有目标时不请求模型，单个目标失败不退出。`-MaxGoals N`执行N个目标后退出，便于验证。游戏内`/tpa goal <文本>`（需`-tpatest`）已接入：命令先`RequestStop`停止当前主动输入、递增stopRevision使旧任务失效，再把目标连同当时的stopRevision／worldSession写入`goal.json`；连续输入只保留最新目标，`/tpa stop`、`/tpa remove`、退出世界会清掉尚未发出的目标。宿主接单前核对这些身份信息，接单后进入执行前再核对一次：校验到启动之间发生stop或换世界时目标直接中断，不会被新一轮状态掩盖。世界未运行、游戏暂停时直接拒绝，不排队等待。宿主驻留时由独立心跳维护`host-ready.json`（每5秒，执行长任务、等待API和待机期间都刷新），正常退出时删除该文件；超过15秒未刷新视为不在线，游戏侧拒绝下单。写回的确认与结果在聊天框显示为`[TPA <id>]`消息，旧目标的结果标为忽略。C#侧只做了编译验证，未实机；协议字段和状态口径见 [集中实测清单](acceptance-checklist.md)。
+单人用 `/tpa goal <文本>`（需 `-tpatest`）；切换与取消沿用单人身份和独立停止通道。常驻宿主的领取、回执及心跳见 [多人协议的文件邮箱](multiplayer-probe.md#文件邮箱)。单人实测边界见 [单人阶段报告](milestone-acceptance.md)。
 
 系统提示词只发能力、规则和限制；目标单独传入，附当前观察和工具定义，不每轮重发整份项目文档／百科。
 
@@ -101,6 +111,6 @@ stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动
 
 ## 已有检查与用量
 
-离线检查入口：`python -B -m unittest discover -s agent -p test_run.py -v`；先按 testing.md 准备可写测试目录。2026-11-18 共71项通过，包含多人身份和共享宿主保护；批次3/4/5另有37项持有物回放、110项显示同步回放与60项攻击策略／调用契约回放。43项 DLL 检查是本机临时检查，不是仓库内完整回归套件。历史失败仍保留在 validation.md，文档修改不重跑测试。
+仓库离线检查、现场验收和报告位置见 [测试入口](testing.md)。单人历史上下文与本轮短 Demo 的用量见 [上下文开销记录](agent-context-cost.md)。
 
 历史单人8次请求任务累计153,201 tokens，含缓存及重复历史，不是本轮多人任务用量，也未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。本轮被取消的请求仍可能计费，报告 turns=0 不能证明未发请求。后续按实际任务测量，不以大型记忆系统或框架迁移阻塞玩法。

@@ -81,13 +81,7 @@ notepad .env
 
 在本机`.env`填写`TPA_API_KEY`；其余TPA_变量按模板和实际服务配置。密钥通过可信方式私下准备，不能通过公开Git仓库转移。`.env`已被忽略，不要强制加入Git。
 
-多人短目标运行方式（每目标最多3轮、宿主4目标后退出）：
-
-```powershell
-.\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4
-```
-
-生成者在游戏输入 `/tpamp goal <中文目标>`，用 `/tpamp stop` 取消。只读模式用 `play.ps1 -MultiplayerBridge` 和 `run-agent.ps1 -Probe -AgentMode multiplayer_server`。自动替换／停止验收须宿主剩余至少2目标额度、AI已生成且无活动目标，再运行 `scripts/test-multiplayer-goals.ps1`。不要把两个模式的停止命令或发物资入口混用。
+按 [多人 Demo 运行说明](agent-setup.md#多人启动与固定傀儡-demo) 启动宿主并在游戏中下单。该页维护当前默认启动方式；只读开关、模式与停止身份见 [多人协议](multiplayer-probe.md)。
 
 以下是单人历史探索入口，保持游戏前台运行：
 
@@ -99,7 +93,7 @@ notepad .env
 
 ## 5. 继续开发时的入口
 
-先读 [README](../README.md)、[TODO](../TODO.md) 和 [技术设计](technical-design.md)。当前一名真人＋一个 AI 的 Host & Play 已验证短目标、两种手动武器及拾取。主清单同时记录 Buff、第二真人与远程服务器的剩余验证，见 [集中清单](acceptance-checklist.md)。
+接续开发先读 [README](../README.md)、[TODO](../TODO.md) 和 [技术设计](technical-design.md)。实测状态、后续范围和新机是否可复现分别查 [集中清单](acceptance-checklist.md) 与本页。
 
 **公司电脑只做离线开发时，不要求启动Steam或游戏、准备角色／世界或API密钥。** Python标准库即可运行现有检查：`python -B -m unittest discover -s agent -p test_run.py -v`；新增检查沿用本地Mock和临时目录。C#构建仍需.NET 8 SDK及匹配的tModLoader文件，没有这些依赖时将构建标为待验证。真实DeepSeek按需少量检查模拟状态下的工具调用，不以此证明游戏动作成功；详细分工和集中验收清单以TODO为准。
 

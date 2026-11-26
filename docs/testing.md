@@ -1,6 +1,12 @@
-# 本地自动测试与 Enter 诊断
+# 测试与回归入口
 
 包版本 0.1.1，文档更新于 2026-11-27。当前多人测试与历史单人入口分列，结果见 [集中清单](acceptance-checklist.md)。
+
+## 真实 DeepSeek Demo 回归
+
+按 [运行说明](agent-setup.md#多人启动与固定傀儡-demo) 提交一次固定傀儡目标，留出同层直线靠近距离。观察是否一次靠近、命中后停手并反馈。报告用 `approach` 到达、指定 NPC 的同序号 `projectile-hit`、最终输入清零和服务器成功反馈共同判定；命中其他靶或者模型只说完成按未确认处理。
+
+如果只需复测第一击和端到端反馈，宿主使用 `-MaxGoals 1`。重复真人短目标则使用常驻宿主。空挥、取消和过期射弹的受控测试见下方离线入口。
 
 ## 多人武器与拾取回归
 
@@ -11,7 +17,7 @@
 
 未验场景为 Host & Play 中限时 Buff 的递减与到期清除。此项与战斗和拾取可在同一名真人＋一个 AI 的世界中进行。当前没有专门的 Buff 施加或回归脚本。
 
-## 当前多人短目标验收
+## 多人目标替换与停止
 
 通过现有 `scripts/play.ps1 -MultiplayerAgent` 启动，默认加载项目模组、Cheat Sheet、HERO's Mod；真人完成测试世界选择、必要登录和实际辅助设置，执行 `/tpamp spawn`。宿主在线、剩余至少2目标额度、无活动目标时运行：
 
@@ -21,9 +27,9 @@
 
 服务器按真实接单、替换、移动开始事件自动停止，再观察60tick；脚本不伪造模型、位移或伤害，不需要真人抢时序。服务器最长60秒、脚本最长70秒，输出 `.local/test-results/acceptance-<id>.json`。运行中不人工操作；失败保留报告并先查现场，不能盲目重跑。该脚本使用真实宿主的两个目标额度，不是离线测试。
 
-可在另一终端启动一个有界宿主：`scripts/run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 3 -MaxGoals 4`。未用动作开关的 `-MultiplayerBridge` 只读模式不能执行此验收。`/tpamp combat` 仅用于目标／接触／生命诊断，不参与索敌或攻击。
+以 [Agent 运行说明](agent-setup.md) 启动宿主。自动脚本需要两个目标额度，运行时保持场景输入空闲。
 
-仓库内Python离线检查（无需游戏／API）：
+## 仓库离线检查
 
 ```powershell
 New-Item -ItemType Directory -Force .local/test-mailbox | Out-Null
@@ -31,21 +37,21 @@ $env:TPA_TEST_MAILBOX = "$PWD\.local\test-mailbox"
 python -B -m unittest discover -s agent -p test_run.py -v
 ```
 
-2026-11-18 仓库内共71项通过；43项DLL检查在本机被忽略的辅助目录中，依赖本机游戏与手工构造状态，并不是公开可复跑的CI套件。单人图形碰撞隔离检查曾因字体未初始化失败，不以资格门控检查代替完整单人游戏回归。再次确有需要时只提取必要、可参数化的小检查，不先搭测试框架。
+本轮仓库内 77 项 Python 检查通过。本机额外验证留在被忽略的 `.local/research`，涉及实际程序集和本机环境。
 
-批次3／4／5新增的离线回放（无需游戏／API）：
+C# 自检同样可脱离游戏和 API 运行。
 
 ```powershell
 dotnet run --project tools/InventorySync.SelfCheck -c Release   # 37项：HeldItemWire布局、三件清单与失败处理
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 110项：显示同步回归
-dotnet run --project tools/Combat.SelfCheck -c Release         # 60项：攻击命令、身份策略与生命周期调用点
+dotnet run --project tools/Combat.SelfCheck -c Release         # 63项：攻击命令、身份、武器要求与生命周期
 ```
 
 InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位放置和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。
 
 CombatSelfCheck验证`MultiplayerAttackPolicy`的命令解析／身份与物品校验、`TPA_MP_TEST_EQUIP` 服务端开关的前置拒绝，以及 `projectile-hit` 的 `heldItemAtHit`／`projectileOwner` 字段语义；并对`DemoPlayerSystem`、`MultiplayerProbe`、`MultiplayerAgentBridge`、`NativeCombat`的关键调用顺序做源码契约检查。它不加载tModLoader，不执行IL钩子，也不证明原生projectile或近战命中真的发生。
 
-本机实际程序集回放另覆盖两种武器左右命中、铁阔剑同靶三轮、客户端挥砍状态、Buff 到期、物品预约与部分堆叠。该辅助夹具留在 `.local/research`；仓库内的自检命令仍主要覆盖协议、策略与源码契约。
+本机实际程序集回放另覆盖两种武器左右命中、铁阔剑同靶重击、Buff 到期、物品预约与部分堆叠，以及傀儡目标绑定、误用武器拒绝和终态反馈顺序。仓库内自检主要覆盖协议、策略与源码契约。
 
 ## 单人历史 smoke 入口
 
