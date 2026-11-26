@@ -27,6 +27,7 @@ public sealed class DemoPlayerSystem : ModSystem
     private long totalUpdates;
     private int attackTicks;
     private int attackDirection;
+    internal int AttackSequence { get; private set; }
     private int movementProbeTicks;
     private float movementProbeStartX;
     private readonly List<object> combatEvents = new();
@@ -185,6 +186,7 @@ public sealed class DemoPlayerSystem : ModSystem
     internal void Attack(int direction, int ticks)
     {
         Stop();
+        AttackSequence++;
         attackDirection = direction;
         attackTicks = ticks;
     }
@@ -251,18 +253,21 @@ public sealed class DemoPlayerSystem : ModSystem
     {
         if (Actor == null) return;
         hitCount++;
+        int? sequence = NativeCombat.ShortswordAttackSequence(projectile);
         // The projectile may outlive the weapon that spawned it; do not claim the current held item is the source.
         RecordCombat(new { kind = "projectile-hit", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
             projectileOwner = projectile.owner, projectile = projectile.type,
+            attackSequence = sequence,
             heldItemAtHit = Actor.HeldItem.type, npc = npc.whoAmI, npcType = npc.type,
             damage, targetLifeAfter = npc.life });
+        ModContent.GetInstance<MultiplayerAgentBridge>().ObserveAttackHit(npc, sequence, damage);
     }
 
     internal void RecordAttackStart(int direction, int ticks)
     {
         if (Actor == null) return;
         RecordCombat(new { kind = "attack-input", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
-            item = Actor.HeldItem.type, direction, ticks });
+            item = Actor.HeldItem.type, direction, ticks, attackSequence = AttackSequence });
     }
 
     internal void RecordHurt(Player.HurtInfo info)
@@ -449,7 +454,7 @@ public sealed class DemoPlayerSystem : ModSystem
         x = Actor.position.X, y = Actor.position.Y,
         velocityX = Actor.velocity.X, velocityY = Actor.velocity.Y,
         life = Actor.statLife, dead = Actor.dead, respawnTimer = Actor.respawnTimer,
-        moveTicks, jumpTicks, attackTicks, dropTicks, autoJumpCount, recoveryJumps, blockedReason,
+        moveTicks, jumpTicks, attackTicks, attackSequence = AttackSequence, dropTicks, autoJumpCount, recoveryJumps, blockedReason,
         navigation = navigation.Snapshot(Actor),
         terrain = LocalTerrain.Observe(Actor),
         mining = ModContent.GetInstance<NativeMining>().Snapshot(),

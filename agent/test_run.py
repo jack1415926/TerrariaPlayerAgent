@@ -478,6 +478,9 @@ class HostTests(unittest.TestCase):
         self.mailbox_patch = patch.object(agent, 'MAILBOX', self.mailbox)
         self.mailbox_patch.start()
         self.addCleanup(self.mailbox_patch.stop)
+        reports = patch.object(agent, 'REPORT_DIR', self.mailbox / 'reports')
+        reports.start()
+        self.addCleanup(reports.stop)
         self.game = FakeGame()
         self.requests = patch.object(agent, 'game_request', self.game.request)
         self.requests.start()
@@ -520,6 +523,20 @@ class HostTests(unittest.TestCase):
             agent.host(self.args, report, idle_polls=3)
         self.assertEqual(report['goals'], [])
         self.assertEqual(report['outcome'], 'host_stopped')
+
+    def test_replacement_published_while_reading_claimed_goal_is_retained(self):
+        self.post('old')
+        read = agent._read_json
+
+        def publish_during_read(claimed):
+            old = read(claimed)
+            self.post('new')
+            return old
+
+        with patch.object(agent, '_read_json', side_effect=publish_during_read):
+            self.assertEqual(agent.poll_goal()['id'], 'old')
+        self.assertEqual(agent.poll_goal()['id'], 'new')
+        self.assertIsNone(agent.poll_goal())
 
     def test_leftover_goal_is_marked_stale_and_not_run(self):
         self.post('old')
@@ -970,13 +987,145 @@ class MultiplayerHostTests(unittest.TestCase):
                 control.observe()
             self.game.state = state
 
-    def test_multiplayer_whitelist_blocks_non_movement_and_long_actions(self):
-        for command in ('/tpa spawn', '/tpa equip wood', '/tpa attack right 1', '/tpa mine 1 2',
+    def test_multiplayer_whitelist_allows_only_one_bounded_action(self):
+        for command in ('/tpa spawn', '/tpa equip wood', '/tpa attack right 2', '/tpa mine 1 2',
                         '/tpa goto 100', '/tpa right 4', '/tpa right 0'):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 agent.validate_actions({'commands': [command]}, 'multiplayer_server')
-        self.assertEqual(agent.validate_actions({'commands': ['/tpa left 0.5', '/tpa stop']},
-                                               'multiplayer_server')[0], ['/tpa left 0.5', '/tpa stop'])
+        with self.assertRaises(ValueError):
+            agent.validate_actions({'commands': ['/tpa left 0.5', '/tpa stop']}, 'multiplayer_server')
+        for command in ('/tpa left 0.5', '/tpa stop', '/tpa approach', '/tpa attack right 1', '/tpa attack left'):
+            self.assertEqual(agent.validate_actions({'commands': [command]}, 'multiplayer_server'), ([command], 0))
+
+    def test_truncated_response_does_not_dispatch_or_claim_completion(self):
+        self.post_goal()
+        reply = self.action_reply('/tpa right 1')
+        reply['choices'][0]['finish_reason'] = 'length'
+        report = {}
+        with patch.object(agent, 'chat', return_value=reply):
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'unconfirmed')
+        self.assertNotIn('/tpa right 1', [command for command, _ in self.sent])
+        detailed = json.loads((agent.REPORT_DIR / report['goals'][0]['reportFile']).read_text(encoding='utf-8'))
+        self.assertEqual(detailed['outcome'], 'model_truncated')
+        self.assertEqual(detailed['turns'][0]['finish_reason'], 'length')
+
+    @staticmethod
+    def action_reply(command):
+        return {'choices': [{'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+            {'id': 'call', 'function': {'name': 'game_actions', 'arguments': json.dumps({'commands': [command]})}}]}}]}
+
+    def prepare_dummy(self):
+        self.game.state.update(attackTargetSlot=103, attackTarget={'slot': 103, 'dx': 65, 'dy': 0, 'distancePixels': 65})
+        self.game.state['actor'].update(item=3507, attackSequence=0)
+        self.args.max_turns = 10
+        self.post_goal(text='靠近傀儡，用手上的铜短剑打中一次', attackTargetSlot=103)
+
+    def test_dummy_trial_uses_latest_observation_then_records_miss_and_matching_hit(self):
+        self.prepare_dummy()
+        observations = []
+        commands = iter(('/tpa attack right 1', '/tpa right 0.5', '/tpa attack right 1'))
+
+        def swing(command, expected_revision=None, context=None):
+            actor = self.game.state['actor']
+            reply = self.request(command, expected_revision, context)
+            if command.startswith('/tpa attack'):
+                actor['attackSequence'] += 1
+                reply['state']['actor']['attackSequence'] = actor['attackSequence']
+            elif command == 'status':
+                self.game.state['attackTarget']['dx'] = 165 - actor['x']
+                reply['state']['attackTarget']['dx'] = self.game.state['attackTarget']['dx']
+                if actor['attackTicks']:
+                    sequence = actor['attackSequence']
+                    # The first swing only sees a delayed shot from the preceding sequence.
+                    event = dict(kind='projectile-hit', tick=self.game.state['tick'],
+                                 attacker=1, projectileOwner=1, projectile=938, npc=103,
+                                 attackSequence=0 if sequence == 1 else sequence, damage=5)
+                    actor['combatEvents'] = reply['state']['actor']['combatEvents'] = [event]
+                    if sequence == 2:
+                        actor['attackTicks'] = reply['state']['actor']['attackTicks'] = 0
+            return reply
+
+        def model(messages, tools=None):
+            payload = json.dumps(messages)
+            self.assertNotIn('connection-1', payload)
+            self.assertNotIn('host-1', payload)
+            current = json.loads(messages[1]['content'].split('\n', 2)[2])
+            self.assertEqual(current['tick'], self.game.state['tick'])
+            observations.append(current)
+            return self.action_reply(next(commands))
+
+        report = {}
+        with patch.object(agent, 'game_request', side_effect=swing), patch.object(agent, 'chat', side_effect=model), \
+                patch.object(agent.time, 'sleep'):
+            agent.host_tick(self.args, report, set())
+        goal = report['goals'][0]
+        self.assertEqual([a['status'] for a in goal['actions']], ['unconfirmed', 'completed', 'completed'])
+        self.assertLess(observations[2]['attackTarget']['dx'], observations[0]['attackTarget']['dx'])
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'succeeded')
+        detailed = json.loads((agent.REPORT_DIR / goal['reportFile']).read_text(encoding='utf-8'))
+        self.assertEqual(detailed['hit']['attackSequence'], 2)
+        self.assertEqual(detailed['final_state']['actor']['attackTicks'], 0)
+        self.assertIn('reason', detailed['turns'][0]['tools'][0]['result']['actions'][0])
+        self.assertEqual(detailed['turns'][2]['observation'], observations[2])
+
+    def test_stop_during_dummy_attack_exits_without_another_attempt(self):
+        self.prepare_dummy()
+
+        def stop_during_swing(command, expected_revision=None, context=None):
+            actor = self.game.state['actor']
+            if command == 'status' and actor['attackTicks']:
+                self.game.state['stopRevision'] += 1
+                actor['attackTicks'] = 0
+            result = self.request(command, expected_revision, context)
+            if command.startswith('/tpa attack'):
+                actor['attackSequence'] = result['state']['actor']['attackSequence'] = 1
+            return result
+
+        report = {}
+        with patch.object(agent, 'game_request', side_effect=stop_during_swing), \
+                patch.object(agent, 'chat', return_value=self.action_reply('/tpa attack right 1')):
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'interrupted')
+        self.assertEqual([a['status'] for a in report['goals'][0]['actions']], ['interrupted'])
+        self.assertEqual(sum(command.startswith('/tpa attack') for command, _ in self.sent), 1)
+
+    def test_dummy_attack_attempt_budget_stops_repeated_misses(self):
+        self.prepare_dummy()
+
+        def miss(command, expected_revision=None, context=None):
+            result = self.request(command, expected_revision, context)
+            if command.startswith('/tpa attack'):
+                actor = self.game.state['actor']
+                actor['attackSequence'] += 1
+                result['state']['actor']['attackSequence'] = actor['attackSequence']
+            return result
+
+        report = {}
+        with patch.object(agent, 'game_request', side_effect=miss), patch.object(agent.time, 'sleep'), \
+                patch.object(agent, 'chat', return_value=self.action_reply('/tpa attack right 1')) as chat:
+            agent.host_tick(self.args, report, set())
+        self.assertEqual(chat.call_count, 3)
+        self.assertEqual(self.wait_for('goal-result-g1.json')['status'], 'budget_exhausted')
+        self.assertEqual(sum(command.startswith('/tpa attack') for command, _ in self.sent), 3)
+
+    def test_approach_requires_a_new_confirmed_arrival(self):
+        self.prepare_dummy()
+        for status in ('arrived', 'blocked'):
+            with self.subTest(status=status):
+                actor = self.game.state['actor']
+                actor.update(x=100, velocityX=0, navigation={'sequence': 1, 'status': 'idle'})
+                control = agent.TaskControl(copy.deepcopy(self.game.state))
+
+                def approach(command, expected_revision=None, context=None):
+                    if command == '/tpa approach':
+                        actor.update(x=145 if status == 'arrived' else 110,
+                                     navigation={'sequence': 2, 'status': status, 'targetX': 145})
+                    return self.request(command, expected_revision, context)
+
+                with patch.object(agent, 'game_request', side_effect=approach):
+                    result = agent.execute_actions(['/tpa approach'], 0, control)
+                self.assertEqual(result['actions'][0]['status'], 'completed' if status == 'arrived' else 'blocked')
 
     def test_multiplayer_host_mode_requires_in_game_goals(self):
         args = SimpleNamespace(agent_mode='multiplayer_server', probe=False, host=True)

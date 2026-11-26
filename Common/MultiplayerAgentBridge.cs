@@ -1,14 +1,16 @@
 using System;
 using System.IO;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using Terraria.ModLoader;
 
 namespace TerrariaPlayerAgent.Common;
 
-// The default bridge is read-only; goal-bound movement requires a separate opt-in.
+// The default bridge is read-only; goal-bound actions require a separate opt-in.
 // Clients must never consume it; only the authoritative server answers.
 public sealed class MultiplayerAgentBridge : ModSystem
 {
@@ -17,6 +19,9 @@ public sealed class MultiplayerAgentBridge : ModSystem
     private string directory = "";
     private Goal? activeGoal;
     private string? latestGoalId;
+    private DummyTarget? goalTarget;
+    private bool targetLost, goalHit;
+    private int goalAttackSequence, goalAttackAttempts;
     private DemoPlayerSystem Demo => ModContent.GetInstance<DemoPlayerSystem>();
     private MultiplayerProbe Probe => ModContent.GetInstance<MultiplayerProbe>();
     internal bool Enabled => Program.LaunchParameters.ContainsKey("-tpatest") ||
@@ -38,11 +43,26 @@ public sealed class MultiplayerAgentBridge : ModSystem
         // PostUpdateEverything also runs on clients; only the server may consume the mailbox.
         if (Main.netMode != NetmodeID.Server) return;
         if (++pollTicks % 3 != 0) return;
-        if (activeGoal != null && (!Matches(activeGoal) || !TryHost(out string session) || session != activeGoal.hostSession))
+        if (activeGoal is { } goal)
         {
-            CancelGoal();
-            Demo.RequestStop();
-            Probe.NotifyController("Goal cancelled: the AI, controller or world changed.");
+            bool sameIdentity = Matches(goal);
+            if (!sameIdentity || !TryHost(out string session) || session != goal.hostSession)
+            {
+                // A bounded host publishes its terminal result before deleting its heartbeat.
+                if (sameIdentity) ReportGoals();
+                if (ReferenceEquals(activeGoal, goal))
+                {
+                    CancelGoal();
+                    Demo.RequestStop();
+                    Probe.NotifyController(sameIdentity ? "目标已取消：宿主已离线。" :
+                        "目标已取消：AI、控制者或世界已变化。");
+                }
+            }
+        }
+        if (goalTarget != null && !targetLost && ResolveTarget() == null)
+        {
+            targetLost = true;
+            Demo.Stop();
         }
         ProcessRequest();
         ReportGoals();
@@ -64,17 +84,40 @@ public sealed class MultiplayerAgentBridge : ModSystem
         if (text.Length is < 1 or > 500 || Demo.Actor == null || Demo.Actor.dead) return false;
         message = "Start run-agent.ps1 -HostMode -AgentMode multiplayer_server first.";
         if (!TryHost(out string hostSession)) return false;
+        DummyTarget? target = null;
+        if ((text.Contains("傀儡") || text.Contains("假人")) &&
+            (text.Contains("打") || text.Contains("攻击") || text.Contains("刺")))
+        {
+            if (MultiplayerAttackPolicy.ValidateDummyGoal(text, Demo.Actor.HeldItem.type) is { } invalid)
+            {
+                message = invalid;
+                return false;
+            }
+            Vector2 origin = Demo.Actor.Center;
+            var npc = Main.npc.Where(n => n.active && n.type == NPCID.TargetDummy &&
+                Vector2.DistanceSquared(n.Center, origin) <= 480 * 480)
+                .OrderBy(n => Vector2.DistanceSquared(n.Center, origin)).ThenBy(n => n.whoAmI).FirstOrDefault();
+            if (npc == null)
+            {
+                message = "没有发现已激活的固定傀儡。请让真人靠近傀儡，并让傀儡离 AI 不超过 480 像素。";
+                return false;
+            }
+            target = new DummyTarget(npc.whoAmI, npc, npc.ai[0], npc.ai[1]);
+        }
         CancelGoal();
         Demo.RequestStop();
         var goal = new Goal(Guid.NewGuid().ToString("N"), text, ServerAgentMode, Demo.StopRevision,
-            WorldId, Demo.ActorGeneration, Probe.ControllerToken!, hostSession);
+            WorldId, Demo.ActorGeneration, Probe.ControllerToken!, hostSession, target?.Slot);
         try
         {
             string temporary = Path.Combine(directory, "goal.tmp");
             File.WriteAllText(temporary, JsonSerializer.Serialize(goal, Json));
             File.Move(temporary, Path.Combine(directory, "goal.json"), true);
             activeGoal = goal;
+            goalTarget = target;
             latestGoalId = goal.id;
+            if (target != null)
+                Mod.Logger.Info($"[TPA-MP] goal={goal.id}, dummy={target.Slot}, distance={Vector2.Distance(Demo.Actor.Center, target.Npc.Center):F1}px");
             message = $"[TPA {goal.id[..6]}] 目标已提交，等待宿主接单。";
             return true;
         }
@@ -104,6 +147,18 @@ public sealed class MultiplayerAgentBridge : ModSystem
         goal.worldSession == WorldId && goal.actorGeneration == Demo.ActorGeneration &&
         goal.controllerToken == Probe.ControllerToken && goal.stopRevision == Demo.StopRevision;
 
+    private NPC? ResolveTarget() => !targetLost && goalTarget is { } target &&
+        Main.npc[target.Slot] is { active: true, type: NPCID.TargetDummy } npc &&
+        ReferenceEquals(npc, target.Npc) && npc.ai[0] == target.TileX && npc.ai[1] == target.TileY ? npc : null;
+
+    internal void ObserveAttackHit(NPC npc, int? attackSequence, int damage)
+    {
+        if (activeGoal == null || !Matches(activeGoal) || goalHit || goalAttackAttempts == 0 || damage <= 0 ||
+            attackSequence != goalAttackSequence || !ReferenceEquals(npc, ResolveTarget())) return;
+        goalHit = true;
+        Demo.Stop();
+    }
+
     internal void CancelGoal()
     {
         if (activeGoal != null)
@@ -119,8 +174,16 @@ public sealed class MultiplayerAgentBridge : ModSystem
             }
             catch (Exception ex) when (ex is IOException or JsonException) { }
         }
+        ClearGoal();
+    }
+
+    private void ClearGoal()
+    {
         activeGoal = null;
         latestGoalId = null;
+        goalTarget = null;
+        targetLost = goalHit = false;
+        goalAttackSequence = goalAttackAttempts = 0;
     }
 
     public override void OnWorldUnload() => CancelGoal();
@@ -149,10 +212,11 @@ public sealed class MultiplayerAgentBridge : ModSystem
             if (detail.Length > 500) detail = detail[..500];
             string message = ack && status == "accepted" ? "宿主已接单，正在处理。" :
                 ack ? $"目标未执行：{status}。{detail}" :
+                status == "succeeded" ? detail :
                 status == "finished" ? $"模型已结束，请以实际行动结果为准：{detail}" : $"目标结束：{status}。{detail}";
             Probe.NotifyController($"[TPA {id[..Math.Min(id.Length, 6)]}] {message}");
             Mod.Logger.Info($"[TPA-MP] goal={id}, ack={ack}, status={status}");
-            if (!ack || status is "rejected" or "stale") { activeGoal = null; latestGoalId = null; }
+            if (!ack || status is "rejected" or "stale") ClearGoal();
         }
         catch (Exception ex) when (ex is IOException or JsonException) { }
     }
@@ -210,7 +274,36 @@ public sealed class MultiplayerAgentBridge : ModSystem
     private string Execute(string command)
     {
         if (command == "/tpa stop") { Demo.Stop(); return "Input stopped."; }
+        if (targetLost || goalHit) throw new InvalidOperationException("The dummy trial has ended.");
+        if (command == "/tpa approach")
+        {
+            if (ResolveTarget() is not { } dummy || Demo.Actor is not { } player ||
+                !NativeCombat.IsAuthoritativeActor(player) || Math.Abs(dummy.Center.Y - player.Center.Y) > 24f)
+                throw new InvalidOperationException("Approach requires the assigned dummy on the same level.");
+            const float attackSpacing = 20f;
+            float offset = dummy.Center.X - player.Center.X;
+            float targetX = player.position.X + offset - Math.Clamp(offset, -attackSpacing, attackSpacing);
+            if (!Demo.MoveTo(targetX, 180, out string message)) throw new InvalidOperationException(message);
+            Probe.NotifyController("[TPA] 正在靠近傀儡。");
+            return message;
+        }
         string[] parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && parts[0] == "/tpa" && parts[1] == "attack")
+        {
+            if (ResolveTarget() == null || goalAttackAttempts >= 3 ||
+                Demo.Actor is not { itemAnimation: 0 } actor || actor.HeldItem.type != ItemID.CopperShortsword ||
+                !MultiplayerAttackPolicy.TryParseCommand(parts[1..], out string action, out int duration) ||
+                !MultiplayerAttackPolicy.TryDirection(action, out int direction))
+                throw new InvalidOperationException("Attack requires the assigned dummy, ready Copper Shortsword and remaining attempts.");
+            string? invalid = MultiplayerAttackPolicy.Validate(Probe.ControllerValid, true, !actor.dead,
+                NativeCombat.IsAuthoritativeActor(actor), actor.HeldItem.type, direction, duration);
+            if (invalid != null) throw new InvalidOperationException(invalid);
+            Demo.Attack(direction, duration * 60);
+            goalAttackAttempts++;
+            goalAttackSequence = Demo.AttackSequence;
+            Demo.RecordAttackStart(direction, duration * 60);
+            return "Copper shortsword attack started.";
+        }
         double seconds = 2;
         if (parts.Length is < 2 or > 3 || parts[0] != "/tpa" || parts[1] is not ("left" or "right") ||
             (parts.Length == 3 && !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) ||
@@ -219,6 +312,14 @@ public sealed class MultiplayerAgentBridge : ModSystem
         Demo.Move(parts[1] == "left" ? -1 : 1, (int)Math.Ceiling(seconds * 60));
         Probe.NotifyController($"[TPA] 正在向{(parts[1] == "left" ? "左" : "右")}移动，最多 {seconds:F1} 秒。");
         return $"Moving {parts[1]} for {seconds:F2}s.";
+    }
+
+    private object? ObserveTarget()
+    {
+        if (ResolveTarget() is not { } npc || Demo.Actor is not { } actor) return null;
+        Vector2 offset = npc.Center - actor.Center;
+        return new { slot = npc.whoAmI, x = npc.Center.X, y = npc.Center.Y,
+            dx = offset.X, dy = offset.Y, distancePixels = offset.Length() };
     }
 
     private object Snapshot() => new
@@ -236,6 +337,8 @@ public sealed class MultiplayerAgentBridge : ModSystem
         controllerToken = Probe.ControllerToken,
         goalId = activeGoal?.id,
         hostSession = activeGoal?.hostSession,
+        attackTargetSlot = activeGoal?.attackTargetSlot,
+        attackTarget = ObserveTarget(),
         actor = ModContent.GetInstance<DemoPlayerSystem>().Snapshot()
     };
 
@@ -251,5 +354,6 @@ public sealed class MultiplayerAgentBridge : ModSystem
         string? agentMode = null, string? worldSession = null, int? actorGeneration = null,
         string? controllerToken = null, string? goalId = null, string? hostSession = null);
     private sealed record Goal(string id, string text, string agentMode, long stopRevision, string worldSession,
-        int actorGeneration, string controllerToken, string hostSession);
+        int actorGeneration, string controllerToken, string hostSession, int? attackTargetSlot);
+    private sealed record DummyTarget(int Slot, NPC Npc, float TileX, float TileY);
 }

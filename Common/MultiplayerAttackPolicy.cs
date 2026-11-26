@@ -9,6 +9,13 @@ internal static class MultiplayerAttackPolicy
     internal static bool IsSupportedAttackItem(int heldItemType) =>
         heldItemType is StartingKit.CopperShortsword or IronBroadsword;
 
+    internal static string? ValidateDummyGoal(string text, int heldItemType)
+    {
+        if (text.Contains("铁阔剑") || text.Contains("铜阔剑") || text.Contains("换武器"))
+            return "当前傀儡目标仅支持使用已持有的铜短剑，换武器和阔剑目标暂未开放。";
+        return heldItemType == StartingKit.CopperShortsword ? null : "请让 AI 先持有铜短剑，再提交傀儡攻击目标。";
+    }
+
     internal static bool TryParseCommand(string[] args, out string action, out int seconds)
     {
         action = "";

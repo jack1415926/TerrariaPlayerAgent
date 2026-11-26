@@ -14,6 +14,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 MAILBOX = ROOT / ".local/tModLoader/TPA"
+REPORT_DIR = ROOT / ".local/test-results"
 COMMAND = re.compile(
     r"(?:status|/tpa (?:spawn|status|stop|jump|clear-enemies)|"
     r"/tpa equip (?:wood|iron|pick)|/tpa select [0-9]{1,2}|"
@@ -63,12 +64,19 @@ TOOL = {
 }
 
 
-MULTIPLAYER_COMMAND = re.compile(r"(?:status|/tpa stop|/tpa (?:left|right)(?: [0-9]+(?:\.[0-9]+)?)?)")
+MULTIPLAYER_COMMAND = re.compile(r"(?:status|/tpa stop|/tpa (?:left|right)(?: [0-9]+(?:\.[0-9]+)?)?"
+                                 r"|/tpa approach|/tpa attack (?:left|right)(?: 1)?)")
 MULTIPLAYER_TOOL = {"type": "function", "function": {**TOOL["function"], "description":
-    "多人服务器中的短任务工具。仅支持 status、/tpa left [秒数]、/tpa right [秒数]、/tpa stop。"
-    "移动默认2秒，每次大于0且最多3秒；本地处理跨坎与碰撞，宿主逐条等待实际结果。"
-    "只能控制已生成的AI，不控制真人。不支持攻击、装备、挖掘、跟随或其他命令。"
-    "危险或受阻时停止并说明，不把计时结束或模型总结当作目标已达成。"}}
+     "每次只选一个动作：status、/tpa left [秒数]、/tpa right [秒数]、/tpa stop，"
+     "或 /tpa approach、/tpa attack left 1、/tpa attack right 1。移动默认2秒，最多3秒。"
+     "/tpa approach 在同层时一次走到分配的傀儡跟前，由游戏按位置减速停步，最多3秒。"
+     "攻击仅用于已分配固定傀儡并手持铜短剑的任务。wait_seconds可省略，默认0。",
+     "parameters": {**TOOL["function"]["parameters"], "properties": {
+         **TOOL["function"]["parameters"]["properties"],
+         "commands": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1},
+     }}}}
+MAX_DUMMY_TURNS = 6
+MAX_DUMMY_ATTACKS = 3
 
 
 def validate_actions(arguments, agent_mode="singleplayer"):
@@ -77,13 +85,15 @@ def validate_actions(arguments, agent_mode="singleplayer"):
     commands = arguments.get("commands")
     if not isinstance(commands, list) or len(commands) > 6:
         raise ValueError("commands must contain at most six commands.")
+    if agent_mode == "multiplayer_server" and len(commands) != 1:
+        raise ValueError("Choose exactly one multiplayer action per observation.")
+    pattern = MULTIPLAYER_COMMAND if agent_mode == "multiplayer_server" else COMMAND
     for command in commands:
-        if not isinstance(command, str) or not COMMAND.fullmatch(command):
+        if not isinstance(command, str) or not pattern.fullmatch(command):
             raise ValueError("Unsupported game command.")
         if agent_mode == "multiplayer_server":
-            if not MULTIPLAYER_COMMAND.fullmatch(command):
-                raise ValueError("Multiplayer supports only status, short left/right movement and stop.")
-            if len(command.split()) == 3 and float(command.split()[2]) > 3:
+            words = command.split()
+            if len(words) == 3 and words[1] in ("left", "right") and float(words[2]) > 3:
                 raise ValueError("Multiplayer movement must be > 0 and <= 3 seconds.")
         parts = command.split()
         if len(parts) > 1 and parts[1] == "select" and int(parts[2]) >= 50:
@@ -93,7 +103,7 @@ def validate_actions(arguments, agent_mode="singleplayer"):
             duration_index = 4 if parts[1] == "mine" else 3 if parts[1] in ("attack", "jump", "goto") else 2
             if len(parts) > duration_index and not 0 < float(parts[duration_index]) <= 10:
                 raise ValueError("Movement/attack duration must be > 0 and <= 10 seconds.")
-    wait = arguments.get("wait_seconds", 0.5)
+    wait = arguments.get("wait_seconds", 0 if agent_mode == "multiplayer_server" else 0.5)
     if type(wait) not in (int, float) or not math.isfinite(wait) or not 0 <= wait <= 15:
         raise ValueError("wait_seconds must be between 0 and 15.")
     return commands, wait
@@ -219,11 +229,19 @@ def observation(result):
     state = result["state"]
     compact = {key: state.get(key) for key in
                ("agentMode", "gameMenu", "netMode", "paused", "focused", "worldSession",
-                "tick", "stopRevision", "player", "actor", "controllerSlot", "controllerToken", "goalId", "hostSession")}
+                "tick", "stopRevision", "player", "actor", "controllerSlot", "controllerToken", "goalId", "hostSession",
+                "attackTargetSlot", "attackTarget")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
     return compact
+
+
+def multiplayer_model_state(state):
+    actor = state.get("actor") or {}
+    return {"tick": state["tick"], "attackTarget": state.get("attackTarget"), "actor": {
+        key: actor[key] for key in ("x", "y", "velocityX", "life", "dead", "item", "direction",
+                                   "moveTicks", "attackTicks", "itemAnimation", "blockedReason") if key in actor}}
 
 
 class TaskControl:
@@ -238,6 +256,11 @@ class TaskControl:
         self.world_session = state.get("worldSession") or None
         self.agent_mode = state.get("agentMode") or "singleplayer"
         self.identity = multiplayer_identity(state) if self.agent_mode == "multiplayer_server" else None
+        self.target_slot = state.get("attackTargetSlot")
+        self.attack_attempts = 0
+        self.target_hit = None
+        self.last_model_observation = None
+        self.model_requests_remaining = None
         actor = state.get("actor") or {}
         self.actor_slot = actor.get("slot")
         self.actor_death = (actor.get("deathCount"), actor.get("respawnCount"))
@@ -258,6 +281,8 @@ class TaskControl:
             raise TaskInterrupted("The configured game world is no longer running.")
         if self.identity is not None and multiplayer_identity(self.state) != self.identity:
             raise TaskInterrupted("The multiplayer goal, controller or AI identity changed.")
+        if self.target_slot is not None and not self.state.get("attackTarget"):
+            raise TaskInterrupted("指定傀儡已消失。", self.state)
         if self.world_session and self.state.get("worldSession") and self.state["worldSession"] != self.world_session:
             raise TaskInterrupted("The world session changed; this task no longer owns the world.")
         if self.state["paused"]:
@@ -329,7 +354,7 @@ class TaskControl:
         record["evidence"] = self.evidence
         return record
 
-    def wait(self, seconds=0, action=False, actor_before=None):
+    def wait(self, seconds=0, action=False, actor_before=None, attack_sequence=None):
         start = self.state["tick"]
         last_tick, progressed = start, time.monotonic()
         deadline = progressed + seconds + 20
@@ -339,6 +364,17 @@ class TaskControl:
             if actor_before and (not actor or actor["dead"] or
                     any(actor[key] != actor_before[key] for key in ("deathCount", "respawnCount"))):
                 raise TaskInterrupted("AI died or was replaced; remaining actions cancelled.")
+            if attack_sequence is not None:
+                hit = next((event for event in self.events if event.get("kind") == "projectile-hit" and
+                            event.get("attackSequence") == attack_sequence and event.get("tick", -1) >= start and
+                            event.get("npc") == self.target_slot and event.get("projectile") == 938 and
+                            event.get("attacker") == event.get("projectileOwner") == actor["slot"] and
+                            event.get("damage", 0) > 0), None)
+                if hit is not None:
+                    self.target_hit = hit
+                    if actor.get("attackTicks", 0):
+                        raise OutcomeUnknown("The server recorded the hit without ending the attack input.")
+                    return state
             active = action and _active(actor)
             if not active and state["tick"] - start >= math.ceil(seconds * 60):
                 return state
@@ -362,6 +398,15 @@ def chat_interruptibly(messages, control):
         control.observe()
     try:
         control.observe()
+        if control.agent_mode == "multiplayer_server" and messages:
+            current = {**multiplayer_model_state(control.state),
+                       "modelRequestsRemaining": control.model_requests_remaining,
+                       "attackAttemptsRemaining": (MAX_DUMMY_ATTACKS - control.attack_attempts
+                                                   if control.target_slot is not None else 0)}
+            control.last_model_observation = current
+            goal = {**messages[1], "content": messages[1]["content"] +
+                    "\n最新状态：\n" + json.dumps(current, ensure_ascii=False)}
+            messages = [messages[0], goal, *messages[2:]]
     except BaseException:
         slot.release()
         raise
@@ -407,7 +452,22 @@ def _execute_actions(commands, wait, control, actions):
     for command in commands:
         before = control.observe()
         entry = {"command": command, "start_tick": before["tick"], "status": "running"}
+        server_action = control.agent_mode == "multiplayer_server"
+        server_attack = server_action and command.startswith("/tpa attack ")
+        if server_action:
+            entry["observationBefore"] = multiplayer_model_state(before)
         actions.append(entry)
+        if command == "/tpa approach" and control.target_slot is None:
+            entry.update(status="rejected", reason="靠近动作需要已分配的固定傀儡。", state=before)
+            break
+        if server_attack:
+            previous = before.get("actor") or {}
+            if (control.target_slot is None or control.attack_attempts >= MAX_DUMMY_ATTACKS or
+                    previous.get("item") != 3507 or previous.get("itemAnimation", 0) != 0):
+                entry.update(status="rejected", reason="攻击需要指定傀儡、已就绪的铜短剑和剩余次数。", state=before)
+                break
+            control.attack_attempts += 1
+            entry["attempt"] = control.attack_attempts
         reply = control.request(command, control.revision)
         control.update(reply)
         if command == "/tpa stop":
@@ -417,12 +477,18 @@ def _execute_actions(commands, wait, control, actions):
             entry.update(status="rejected", state=control.state)
             break
         parts = command.split()
-        timed = len(parts) > 1 and parts[1] in ("left", "right", "attack", "jump", "down", "mine", "goto", "home")
+        timed = len(parts) > 1 and parts[1] in ("left", "right", "attack", "jump", "down", "mine", "goto", "home", "approach")
         previous = before.get("actor")
-        after = control.wait(action=True, actor_before=previous) if timed else control.state
+        sequence = None
+        if server_attack:
+            sequence = (control.state.get("actor") or {}).get("attackSequence")
+            if type(sequence) is not int or sequence == previous.get("attackSequence"):
+                raise OutcomeUnknown("Attack input was accepted without a new server attack sequence.")
+            entry.update(attackSequence=sequence, start_tick=control.state["tick"])
+        after = (control.wait(action=True, actor_before=previous, attack_sequence=sequence) if timed else control.state)
         actor = after.get("actor")
         entry.update(status="completed", end_tick=after["tick"], state=after)
-        if len(parts) > 1 and parts[1] in ("goto", "home"):
+        if len(parts) > 1 and parts[1] in ("goto", "home", "approach"):
             nav = (actor or {}).get("navigation") or {}
             previous_nav = (before.get("actor") or {}).get("navigation") or {}
             entry["navigation"] = nav
@@ -462,6 +528,12 @@ def _execute_actions(commands, wait, control, actions):
                 entry.update(status="blocked", reason="No downward progress observed; down only drops through platforms.")
                 break
             if parts[1] == "attack":
+                if server_attack:
+                    if control.target_hit is None:
+                        entry.update(status="unconfirmed", reason="这次刺击未命中指定傀儡。")
+                    else:
+                        entry["projectile_hit"] = control.target_hit
+                    continue
                 # Read the full bounded game event buffer before compacting it for the model.
                 hits = [event for event in control.events
                         if event.get("kind") == "item-hit" and event.get("tick", 0) > before["tick"]
@@ -470,7 +542,7 @@ def _execute_actions(commands, wait, control, actions):
                 entry["item_hits"] = hits
                 if not hits:
                     entry.update(status="unconfirmed", reason="Attack input ended; no corresponding item-hit was observed.")
-    state = control.wait(wait)
+    state = control.state if control.target_hit is not None else control.wait(wait)
     return {"ok": all(action["status"] == "completed" for action in actions), "actions": actions, "state": state}
 
 
@@ -556,29 +628,50 @@ def run(args, report, expected=None):
     goal = args.goal or Path(args.goal_file).read_text(encoding="utf-8")
     report.update(goal=goal, initial_state=initial, turns=[], outcome="budget_exhausted")
     control = TaskControl(initial)
+    multiplayer = mode == "multiplayer_server"
+    dummy_trial = control.target_slot is not None
+    max_turns = min(args.max_turns, MAX_DUMMY_TURNS) if dummy_trial else args.max_turns
     messages = [
-        {"role": "system", "content": (ROOT / ("agent/prompts/multiplayer.md" if mode == "multiplayer_server"
+        {"role": "system", "content": (ROOT / ("agent/prompts/multiplayer.md" if multiplayer
                                                    else "agent/prompts/system.md")).read_text(encoding="utf-8")},
-        {"role": "user", "content": goal + "\n初始状态：\n" + json.dumps(initial, ensure_ascii=False)},
+        {"role": "user", "content": goal if multiplayer else
+         goal + "\n初始状态：\n" + json.dumps(initial, ensure_ascii=False)},
     ]
     try:
-        for turn in range(1, args.max_turns + 1):
-            print(f"Model request {turn}/{args.max_turns}", flush=True)
+        for turn in range(1, max_turns + 1):
+            control.model_requests_remaining = max_turns - turn
+            print(f"Model request {turn}/{max_turns}", flush=True)
             reply = chat_interruptibly(messages, control)
-            message = reply["choices"][0]["message"]
-            entry = {"model": reply.get("model"), "usage": reply.get("usage"), "assistant": message, "tools": []}
+            choice = reply["choices"][0]
+            message = choice["message"]
+            entry = {"model": reply.get("model"), "usage": reply.get("usage"), "assistant": message, "tools": [],
+                     "finish_reason": choice.get("finish_reason")}
+            if multiplayer:
+                entry["observation"] = control.last_model_observation
             report["turns"].append(entry)
             messages.append(message)
             if message.get("content"):
                 print(message["content"], flush=True)
             calls = message.get("tool_calls", [])
+            if multiplayer and choice.get("finish_reason") == "length":
+                report.update(outcome="model_truncated", summary="模型回复达到长度上限，未确认任务完成。")
+                break
             if not calls:
-                report.update(outcome="model_finished", summary=message.get("content", ""))
+                moved = any(action["status"] == "completed" and action["command"].startswith(("/tpa left", "/tpa right"))
+                            for past in report["turns"] for tool in past["tools"]
+                            for action in tool["result"].get("actions", []))
+                if multiplayer and (dummy_trial or not moved):
+                    report.update(outcome="task_unconfirmed", summary=("未确认命中指定傀儡。" if dummy_trial else
+                                  "没有可确认的动作结果。"))
+                else:
+                    report.update(outcome="model_finished", summary=message.get("content", ""))
                 break
             if len(calls) > 4:
                 raise RuntimeError("Too many tool batches in one response.")
             for call in calls:
                 try:
+                    if multiplayer and len(calls) != 1:
+                        raise ValueError("Choose exactly one multiplayer action per observation.")
                     if call["function"]["name"] != "game_actions":
                         raise ValueError("Unknown tool.")
                     commands, wait = validate_actions(json.loads(call["function"]["arguments"]), mode)
@@ -588,8 +681,9 @@ def run(args, report, expected=None):
                     print(f"Model actions: {commands}; wait={wait}s", flush=True)
                     result = execute_actions(commands, wait, control)
                     for action in result["actions"]:
+                        hits = len(action.get("item_hits", [])) + int("projectile_hit" in action)
                         print(f"Action {action['command']}: {action['status']}; "
-                              f"deltaX={action.get('deltaX')}, item_hits={len(action.get('item_hits', []))}", flush=True)
+                              f"deltaX={action.get('deltaX')}, hits={hits}", flush=True)
                         if action.get("mining"):
                             mining = action["mining"]
                             print(f"Mining ({mining.get('x')},{mining.get('y')}): {mining.get('status')}; "
@@ -597,12 +691,24 @@ def run(args, report, expected=None):
                     actor = result["state"].get("actor") or {}
                     print(f"Observed: item={actor.get('item')}, hits={actor.get('hitCount')}, life={actor.get('life')}", flush=True)
                 entry["tools"].append({"call_id": call["id"], "result": result})
-                messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)})
+                model_result = result
+                if multiplayer and "state" in result:
+                    model_result = {**result, "state": multiplayer_model_state(result["state"]),
+                                    "actions": [{k: v for k, v in action.items() if k not in ("state", "observationBefore")}
+                                                for action in result.get("actions", [])]}
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(model_result, ensure_ascii=False)})
                 if result.get("outcome") in ("interrupted", "unknown"):
                     report.update(outcome=result["outcome"], error=result["error"],
                                   interruption=result.get("interruption"),
                                   paused_reason=result.get("paused_reason"),
                                   resume=result.get("resume"), evidence=result.get("evidence"))
+                    return
+                if dummy_trial and control.target_hit is not None:
+                    report.update(outcome="goal_succeeded", hit=control.target_hit,
+                                  summary=f"已用铜短剑命中傀儡，造成 {control.target_hit['damage']} 点伤害，已停止出招。")
+                    return
+                if dummy_trial and control.attack_attempts >= MAX_DUMMY_ATTACKS:
+                    report.update(outcome="budget_exhausted", summary="已用完三次攻击尝试，未确认命中傀儡。")
                     return
     except INTERRUPTIONS as exc:
         record = control.recover(exc)
@@ -615,7 +721,8 @@ def run(args, report, expected=None):
         # Preserve the actor and default respawn; only cancel active input.
         try:
             # Never let an old task's cleanup stop a newer task after a user cancellation.
-            report["final_state"] = observation(control.request("/tpa stop", control.revision))
+            report["final_state"] = (control.state if report["outcome"] == "goal_succeeded" else
+                                     observation(control.request("/tpa stop", control.revision)))
         except TaskInterrupted as exc:
             report["final_state"] = exc.state or control.state
         except RuntimeError as exc:
@@ -706,12 +813,17 @@ def _write_json(path, payload):
 
 
 def poll_goal():
-    """Consume one goal message, if any. The file is removed before it is used."""
+    """Claim the mailbox entry before reading it, so a newer goal can occupy the original path."""
     path = MAILBOX / "goal.json"
-    if not path.exists():
+    claimed = MAILBOX / f"goal-claimed-{uuid.uuid4().hex}.json"
+    try:
+        path.rename(claimed)
+    except (FileNotFoundError, PermissionError):
         return None
-    goal = _read_json(path)
-    path.unlink(missing_ok=True)
+    try:
+        goal = _read_json(claimed)
+    finally:
+        claimed.unlink(missing_ok=True)
     if not isinstance(goal, dict) or not goal.get("id") or not isinstance(goal.get("text"), str):
         return None
     return goal
@@ -728,7 +840,8 @@ def goal_result(goal, status, summary="", turns=0):
                 {"id": goal["id"], "status": status, "summary": summary, "turns": turns, "agentMode": goal.get("agentMode")})
 
 
-RESULT_STATUS = {"model_finished": "finished", "budget_exhausted": "budget_exhausted",
+RESULT_STATUS = {"model_finished": "finished", "goal_succeeded": "succeeded", "task_unconfirmed": "unconfirmed",
+                 "model_truncated": "unconfirmed", "budget_exhausted": "budget_exhausted",
                  "interrupted": "interrupted", "unknown": "unknown"}
 
 
@@ -802,6 +915,17 @@ def host_tick(args, report, seen):
                      actions=[{key: action[key] for key in ("command", "status", "deltaX", "start_tick", "end_tick")
                                if key in action} for turn in goal_report.get("turns", [])
                               for tool in turn.get("tools", []) for action in tool["result"].get("actions", [])])
+    goal_report.update(id=goal["id"], goal=text, status=status, agent_mode=mode)
+    try:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        goal_id = goal["id"] if re.fullmatch(r"[a-zA-Z0-9-]{1,64}", goal["id"]) else uuid.uuid4().hex
+        path = REPORT_DIR / f"goal-{goal_id}.json"
+        _write_json(path, goal_report)
+        entry["reportFile"] = path.name
+        print(f"Goal report: {path}", flush=True)
+    except OSError as exc:
+        entry["reportError"] = str(exc)
+        print(f"Could not save goal report: {exc}", file=sys.stderr)
     goal_result(goal, status, goal_report.get("summary") or goal_report.get("error", ""), entry["turns"])
     return True
 
@@ -919,7 +1043,7 @@ def main():
         report.update(outcome="failed", error=str(exc))
         print(f"Agent stopped: {exc}", file=sys.stderr)
         exit_code = 1
-    directory = ROOT / ".local/test-results"
+    directory = REPORT_DIR
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"agent-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

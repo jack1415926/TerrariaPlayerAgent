@@ -13,7 +13,11 @@ namespace TerrariaPlayerAgent.Common;
 // The owner checks used here were inspected in tML 2026.08.3.0. Never change Main.myPlayer.
 public sealed class NativeCombat : ModSystem
 {
-    private static readonly ConditionalWeakTable<Projectile, Player> shortswordOwners = new();
+    private sealed record ShortswordShot(Player Owner, int AttackSequence);
+    private static readonly ConditionalWeakTable<Projectile, ShortswordShot> shortswordOwners = new();
+
+    internal static int? ShortswordAttackSequence(Projectile projectile) =>
+        shortswordOwners.TryGetValue(projectile, out var shot) ? shot.AttackSequence : null;
 
     public override void Load()
     {
@@ -147,7 +151,8 @@ public sealed class NativeCombat : ModSystem
             source is EntitySource_ItemUse { Entity: Player player, Item.type: ItemID.CopperShortsword } &&
             projectile.owner == player.whoAmI && IsAuthoritativeActor(player))
         {
-            shortswordOwners.Add(projectile, player);
+            shortswordOwners.Add(projectile, new ShortswordShot(player,
+                ModContent.GetInstance<DemoPlayerSystem>().AttackSequence));
             // Vanilla only broadcasts creation for the local owner, so send the virtual player's stab explicitly.
             NetMessage.SendData(MessageID.SyncProjectile, number: index);
         }
@@ -167,7 +172,7 @@ public sealed class NativeCombat : ModSystem
         cursor.Emit(OpCodes.Ldarg_0);
         cursor.EmitDelegate<Func<int, Projectile, int>>((local, projectile) =>
             Main.netMode == NetmodeID.Server && projectile.type == ProjectileID.CopperShortswordStab &&
-            shortswordOwners.TryGetValue(projectile, out Player? player) && !player.dead && !player.hostile &&
+            shortswordOwners.TryGetValue(projectile, out var shot) && shot.Owner is { dead: false, hostile: false } player &&
             projectile.owner == player.whoAmI && IsAuthoritativeActor(player) ? projectile.owner : local);
     }
 
