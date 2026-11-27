@@ -25,6 +25,8 @@ public sealed class MultiplayerAgentBridge : ModSystem
     private int goalAttackSequence, goalAttackAttempts, goalAttackDirection;
     private float combatOriginX;
     private readonly MultiplayerCompanion companion = new();
+    private WoodCollection? woodCollection;
+    private object? lastWoodCollection;
     private DemoPlayerSystem Demo => ModContent.GetInstance<DemoPlayerSystem>();
     private MultiplayerProbe Probe => ModContent.GetInstance<MultiplayerProbe>();
     internal bool Enabled => Program.LaunchParameters.ContainsKey("-tpatest") ||
@@ -55,9 +57,11 @@ public sealed class MultiplayerAgentBridge : ModSystem
                 if (sameIdentity) ReportGoals();
                 if (ReferenceEquals(activeGoal, goal))
                 {
-                    CancelGoal();
+                    bool wasCollecting = woodCollection != null;
+                    CancelGoal(sameIdentity ? "模型宿主已离线或会话已变化" :
+                        Demo.Actor is { dead: true } ? "AI 已死亡" : "AI、控制者或世界已变化");
                     Demo.RequestStop();
-                    Probe.NotifyController(sameIdentity ? "目标已取消：宿主已离线。" :
+                    if (!wasCollecting) Probe.NotifyController(sameIdentity ? "目标已取消：宿主已离线。" :
                         "目标已取消：AI、控制者或世界已变化。");
                 }
             }
@@ -67,16 +71,23 @@ public sealed class MultiplayerAgentBridge : ModSystem
             targetLost = true;
             Demo.Stop();
         }
-        ProcessRequest();
         ReportGoals();
+        ProcessRequest();
         companion.Update(Demo, Probe);
+        if (woodCollection is { } collection)
+        {
+            if (collection.Complete) EndWoodCollection("succeeded", "已达到实际拾取数量");
+            else if (collection.Advance(Demo, ModContent.GetInstance<NativeMining>()) is { } failure)
+                EndWoodCollection("failed", failure);
+        }
     }
 
     private string WorldId => ModContent.GetInstance<WorldSession>().Id;
     internal string MailboxDirectory => directory;
     internal string? CurrentGoalId => activeGoal?.id;
     internal string? CompanionStatus => ActionsEnabled ? companion.Status : null;
-    internal void StopGoal() { CancelGoal(); Demo.RequestStop(); }
+    internal string? ResourceProgress => woodCollection?.Progress;
+    internal void StopGoal() { Demo.RequestStop(); CancelGoal("收到停止或同行指令"); }
 
     internal bool QueueGoal(int sender, string text, out string message)
     {
@@ -98,6 +109,17 @@ public sealed class MultiplayerAgentBridge : ModSystem
             StopGoal();
             message = companion.Start(command, Demo, Probe.ControllerToken!);
             return true;
+        }
+        int? woodAmount = WoodCollectionPolicy.Parse(text);
+        if (woodAmount == 0)
+        {
+            message = $"[TPA] 请按「帮我收集 10 个木材」下达单一采集目标，数量为 1–{WoodCollectionPolicy.MaxQuantity}。";
+            return false;
+        }
+        if (woodAmount.HasValue && WoodCollection.AxeSlot(actor) < 0)
+        {
+            message = "[TPA] 背包没有可用斧头，已收集 0 个木材。";
+            return false;
         }
         message = "Start run-agent.ps1 -HostMode -AgentMode multiplayer_server first.";
         if (!TryHost(out string hostSession)) return false;
@@ -149,6 +171,13 @@ public sealed class MultiplayerAgentBridge : ModSystem
         Demo.RequestStop();
         var goal = new Goal(Guid.NewGuid().ToString("N"), text, ServerAgentMode, Demo.StopRevision,
             WorldId, Demo.ActorGeneration, Probe.ControllerToken!, hostSession, target?.Slot, weapon);
+        if (woodAmount is int requested)
+        {
+            woodCollection = new WoodCollection(goal.id, actor, requested);
+            activeGoal = goal;
+            message = $"[TPA {goal.id[..6]}] 开始收集 {requested} 个木材。";
+            return true;
+        }
         try
         {
             string temporary = Path.Combine(directory, "goal.tmp");
@@ -177,12 +206,13 @@ public sealed class MultiplayerAgentBridge : ModSystem
         {
             var file = new FileInfo(Path.Combine(directory, "host-ready.json"));
             if (!file.Exists || (DateTime.UtcNow - file.LastWriteTimeUtc).TotalSeconds is < 0 or >= 15) return false;
-            using var doc = JsonDocument.Parse(File.ReadAllText(file.FullName));
+            using var stream = File.Open(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            using var doc = JsonDocument.Parse(stream);
             if (Text(doc.RootElement, "agentMode") != ServerAgentMode) return false;
             hostSession = Text(doc.RootElement, "hostSession");
             return Guid.TryParse(hostSession, out _);
         }
-        catch (Exception ex) when (ex is IOException or JsonException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return false; }
     }
 
     private bool Matches(Goal goal) => Probe.ControllerValid && Demo.Actor is { active: true, dead: false } &&
@@ -210,9 +240,37 @@ public sealed class MultiplayerAgentBridge : ModSystem
         Demo.Stop();
     }
 
-    internal void CancelGoal()
+    internal void ObserveWoodDrop(Item item, Point source)
+    {
+        if (activeGoal is { } goal && Matches(goal)) woodCollection?.TrackDrop(item, source);
+    }
+
+    internal void ObserveWoodStack(Item destination, Item source, int quantity)
+    {
+        woodCollection?.TrackStack(destination, source, quantity);
+    }
+
+    internal WoodCollection? TrackWoodPickup(Player player, Item item, int stack) =>
+        woodCollection is { } collection && ReferenceEquals(collection.Actor, player) &&
+        activeGoal is { } goal && Matches(goal) && collection.Tracks(item, stack) ? collection : null;
+
+    private void EndWoodCollection(string outcome, string reason)
+    {
+        if (woodCollection is not { } collection) return;
+        woodCollection = null;
+        ClearGoal();
+        if (ReferenceEquals(Demo.Actor, collection.Actor) && NativeCombat.IsAuthoritativeActor(collection.Actor))
+            Demo.Stop();
+        collection.Finish(outcome, reason);
+        lastWoodCollection = collection.Snapshot();
+        Mod.Logger.Info($"[TPA-MP] WoodCollection {JsonSerializer.Serialize(lastWoodCollection)}");
+        Probe.NotifyController($"[TPA] 已收集 {collection.Progress}。{reason}。");
+    }
+
+    internal void CancelGoal(string reason = "目标已替换或取消")
     {
         companion.Clear();
+        if (woodCollection != null) EndWoodCollection("cancelled", reason);
         if (activeGoal != null)
         {
             string file = Path.Combine(directory, "goal.json");
@@ -239,15 +297,25 @@ public sealed class MultiplayerAgentBridge : ModSystem
         goalAttackSequence = goalAttackAttempts = goalAttackDirection = 0;
     }
 
-    public override void OnWorldUnload() => CancelGoal();
+    public override void OnWorldUnload()
+    {
+        CancelGoal("世界已退出");
+        lastWoodCollection = null;
+    }
 
-    private static string Text(JsonElement root, string key) => root.TryGetProperty(key, out var value) &&
+    private static string Text(JsonElement root, string key) => root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(key, out var value) &&
         value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
     private void ReportGoals()
     {
-        foreach (string file in Directory.GetFiles(directory, "goal-ack-*.json")) ReportGoal(file, true);
-        foreach (string file in Directory.GetFiles(directory, "goal-result-*.json")) ReportGoal(file, false);
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(directory, "goal-ack-*.json")) ReportGoal(file, true);
+            foreach (string file in Directory.EnumerateFiles(directory, "goal-result-*.json")) ReportGoal(file, false);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void ReportGoal(string file, bool ack)
@@ -261,6 +329,12 @@ public sealed class MultiplayerAgentBridge : ModSystem
             File.Delete(file);
             ModContent.GetInstance<MultiplayerGoalAcceptance>().Observe(id, ack, status);
             if (id != latestGoalId || !Probe.ControllerValid) return;
+            if (!ack || status is "rejected" or "stale")
+            {
+                // The host may finish without a confirmed stop. Release the current goal's input here.
+                Demo.Stop();
+                ClearGoal();
+            }
             string detail = Text(root, ack ? "reason" : "summary");
             if (detail.Length > 500) detail = detail[..500];
             string message = ack && status == "accepted" ? "宿主已接单，正在处理。" :
@@ -269,22 +343,20 @@ public sealed class MultiplayerAgentBridge : ModSystem
                 status == "finished" ? $"模型已结束，请以实际行动结果为准：{detail}" : $"目标结束：{status}。{detail}";
             Probe.NotifyController($"[TPA {id[..Math.Min(id.Length, 6)]}] {message}");
             Mod.Logger.Info($"[TPA-MP] goal={id}, ack={ack}, status={status}");
-            if (!ack || status is "rejected" or "stale") ClearGoal();
         }
         catch (Exception ex) when (ex is IOException or JsonException) { }
     }
 
     private void ProcessRequest()
     {
-        string path = Path.Combine(directory, "request.json");
-        if (!File.Exists(path)) return;
+        string? path = RequestMailbox.Claim(directory, "request-mp");
+        if (path == null) return;
 
         string id = "";
         try
         {
             var request = JsonSerializer.Deserialize<Request>(File.ReadAllText(path))
                 ?? throw new InvalidDataException("Empty request.");
-            File.Delete(path);
             id = request.id;
             if (!Guid.TryParse(id, out _) || request.command.Length > 700)
                 throw new InvalidDataException("Invalid request id or command.");
@@ -319,13 +391,13 @@ public sealed class MultiplayerAgentBridge : ModSystem
         }
         catch (Exception ex)
         {
-            // The request is consumed before execution: never replay a failed action.
-            if (File.Exists(path)) File.Delete(path);
             Respond(id, new { id, ok = false, error = ex.Message });
         }
+        finally { RequestMailbox.Release(path); }
     }
 
     private bool OwnsRequest(Request request) => ActionsEnabled && request.agentMode == ServerAgentMode && activeGoal != null &&
+        woodCollection == null &&
         Matches(activeGoal) && request.expectedStopRevision == Demo.StopRevision && request.worldSession == WorldId &&
         request.actorGeneration == Demo.ActorGeneration && request.controllerToken == Probe.ControllerToken &&
         request.goalId == activeGoal.id && request.hostSession == activeGoal.hostSession &&
@@ -442,6 +514,7 @@ public sealed class MultiplayerAgentBridge : ModSystem
         attackHit = goalHit,
         attackTarget = ObserveTarget(),
         companionStatus = CompanionStatus,
+        woodCollection = woodCollection?.Snapshot() ?? lastWoodCollection,
         actor = ModContent.GetInstance<DemoPlayerSystem>().Snapshot()
     };
 

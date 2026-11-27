@@ -79,7 +79,11 @@ public sealed class NativePlayerInteractions : ModSystem
     private static Item PickupItem(On_Player.orig_PickupItem orig, Player player, int slot, int itemIndex, Item item)
     {
         int stack = item.stack;
+        var collection = item.type == ItemID.Wood && IsServerActor(player)
+            ? ModContent.GetInstance<MultiplayerAgentBridge>().TrackWoodPickup(player, item, stack) : null;
+        int before = collection == null ? 0 : WoodCollection.CountWood(player);
         Item remainder = orig(player, slot, itemIndex, item);
+        collection?.ConfirmPickup(item, remainder, stack, before, WoodCollection.CountWood(player), itemIndex);
         if (!ReferenceEquals(item, remainder) || stack != remainder.stack)
             SyncPickup(player, itemIndex);
         return remainder;

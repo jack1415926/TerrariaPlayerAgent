@@ -128,8 +128,9 @@ public sealed class MultiplayerProbe : ModSystem
             if (action == "status")
             {
                 reply = Demo.Status(Main.player[sender]);
-                if (Demo.Actor != null && ModContent.GetInstance<MultiplayerAgentBridge>().CompanionStatus is { } status)
-                    reply += $" 同行状态：{status}。";
+                var bridge = ModContent.GetInstance<MultiplayerAgentBridge>();
+                if (Demo.Actor != null && bridge.CompanionStatus is { } status)
+                    reply += bridge.ResourceProgress is { } progress ? $" 采集进度：{progress}。" : $" 同行状态：{status}。";
             }
             else if (controller >= 0 && (!ControllerValid || controller != sender))
                 reply = "Only the player who spawned this probe can control it.";

@@ -48,6 +48,15 @@
 
 以 [Agent 运行说明](agent-setup.md) 启动宿主。自动脚本需要两个目标额度，运行时保持场景输入空闲。
 
+## V1.0 资源成长验收计划
+
+本轮仅准备方案。完整验收使用独立的新 Host & Play 世界、一名真人和一个 AI，保持原生伤害、刷怪和物品规则，关闭测试物资发放。启动显式多人 Agent 模式和常驻宿主。
+
+1. **地表协作**。生成角色并核对铜短剑、铜镐、铜斧。沿地表路线完成跟随、跨小坎、近敌应战、隔墙不出招和叫回。在 AI 之外同步核对真人库存和输入。
+2. **普通木材采集**。在有普通森林树的地表输入 `/tpamp goal 帮我收集 10 个木材`。查看服务器 `WoodCollection` 记录，逐项对照选斧、目标树干、原生切除、地面木材和 AI 入包。背包自带木材不计入；允许正常超额。对多棵树换目标的正向用例，把请求量设得高于第一棵实际掉落量。
+3. **采集失败和中断**。另验斧头缺失、背包满、隔墙、真人先拾、AI 死亡、采集中 `stop`、有效新目标替换及模型宿主过期。应报告实际进度和原因。原生已经入包的物品保留，旧任务和自动行为不会在停止后恢复。第二观察端可用于检查树木瓦片和地面物品同步。
+4. **制作、使用和恢复**。待 B03 到 B05 正式落地后，使用已放置工作台制作木剑。核对正常配方材料实际扣减、成品入包、选中及原生命中相同武器。在正常退出再进后对照身份、背包、装备与成长数据，验证不会重复发放初始装备，未完成动作不重启。另验材料不足、无制作站及异常退出检查点。
+
 ## 仓库离线检查
 
 ```powershell
@@ -63,7 +72,7 @@ C# 自检同样可脱离游戏和 API 运行。
 ```powershell
 dotnet run --project tools/InventorySync.SelfCheck -c Release   # 37项：HeldItemWire布局、三件清单与失败处理
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 110项：显示同步回归
-dotnet run --project tools/Combat.SelfCheck -c Release         # 64项：攻击命令、身份、武器要求与生命周期
+dotnet run --project tools/Combat.SelfCheck -c Release         # 78项：攻击、身份、生命周期、木材和邮箱领取
 ```
 
 InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位放置和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。
@@ -128,13 +137,13 @@ smoke-test.ps1 提示后有 3 秒切回游戏，再移除旧演示角色，生�
 针对挖掘目标可通过已有入口只读检查：`.\scripts\invoke-test.ps1 -Command 'tile 2103 295'`。reply是JSON，包含当前方块、CanKillTile和正上方物体／树干frame信息；只在独立开发入口开放，不执行任意代码或改变世界。用于本次原失败目标定位，不新增测试服务或通用调试平台。
 
 - 只有通过 `-tpatest` 启动才启用。play.ps1 已添加该参数，普通 Steam 启动不启用入口。
-- 脚本写入独立配置的 `TPA/request.json`；在 PostUpdateInput 中每三次输入更新检查一次，所有游戏操作在游戏线程执行。
+- 脚本写入独立配置的 `TPA/request-single-<id>.json`。游戏每三次输入更新检查一次，以同目录重命名领取请求后才执行。超时撤回与领取竞争同一个请求文件。
 - **测试游戏必须保持前台。** 本机单人失焦会暂停，并跳过输入及世界更新；后台请求可能超时，不宣称支持后台测试。普通状态/动作命令也可以先在 PowerShell 输入好，再切回游戏；批量脚本已提供 3 秒切换时间。AI 从后台工具调用时只需聚焦游戏一次，不需要逐步截图。
 - 每条请求带唯一 id，响应写入 `response-id.json`，脚本读完移除。使用原子重命名避免半写入文件，每次只允许一条请求。
 - 只接受现有 `/tpa` 演示动作，以及下文列出的输入诊断动作，不执行任意代码、外部程序或其他模组命令；不开网络端口。
 - `/tpa` 请求复用现有 DemoCommand.Action 及角色控制层；没有复制一套行为实现。它不模拟聊天输入，也不测试 tModLoader 的聊天命令分发器。
 - `ok=true` 代表请求已处理，不代表游戏行为已通过；行为通过需要状态断言或人工观察。
-- 2026-10-22 起额外返回 accepted，区分游戏是否接受命令；新增 stopRevision 表示停止／移除版本。Agent 动作可携带 expectedStopRevision，过期时返回 interrupted=true 且不执行。旧脚本不带该字段仍可运行。停止使用独立 stop.json 优先处理，不占普通请求邮箱；所有游戏操作仍在游戏线程执行。
+- accepted 表示游戏是否接受命令。Agent 动作可携带 expectedStopRevision，过期时返回 interrupted=true 且不执行。单人停止使用独立的 `stop-<id>.json`，优先于普通请求。游戏操作在游戏线程执行。
 - 默认等待 5 秒。超时会报错，不能当作成功或直接重复执行有副作用的动作；先查询 status。
 - 快照包含人类与 AI 的位置、生命、控制意图、更新计数、聊天和输入状态，不包含聊天内容。
 

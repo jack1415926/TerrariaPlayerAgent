@@ -70,7 +70,9 @@ internal sealed class MultiplayerCompanion
         }
 
         if (!returning && actor.itemAnimation == 0 && Main.GameUpdateCount >= nextDefenseTick &&
-            offset.LengthSquared() <= 144f * 144f && FindThreat(actor) is { } threat)
+            offset.LengthSquared() <= 144f * 144f &&
+            DefenseSlot(actor) is int slot && FindThreat(actor, actor.inventory[slot].type) is { } threat &&
+            (slot == actor.selectedItem || demo.SelectItem(slot)))
         {
             // One native use press. Re-evaluate the threat before each subsequent press.
             int attackDirection = threat.Center.X < actor.Center.X ? -1 : 1;
@@ -117,10 +119,17 @@ internal sealed class MultiplayerCompanion
         else Finish(demo, probe, "找不到可走的位置，AI 已停下等候。");
     }
 
-    private static NPC? FindThreat(Player actor)
+    private static int? DefenseSlot(Player actor)
     {
-        if (!MultiplayerAttackPolicy.IsSupportedAttackItem(actor.HeldItem.type)) return null;
-        float reachX = actor.HeldItem.type == StartingKit.CopperShortsword ? 34f : 42f;
+        if (MultiplayerAttackPolicy.IsSupportedAttackItem(actor.HeldItem.type)) return actor.selectedItem;
+        int slot = Array.FindIndex(actor.inventory, 0, 50,
+            item => !item.IsAir && MultiplayerAttackPolicy.IsSupportedAttackItem(item.type));
+        return slot < 0 ? null : slot;
+    }
+
+    private static NPC? FindThreat(Player actor, int weapon)
+    {
+        float reachX = weapon == StartingKit.CopperShortsword ? 34f : 42f;
         return Main.npc.Where(npc => npc.active && !npc.friendly && !npc.dontTakeDamage &&
                 npc.life > 0 && npc.damage > 0 && Math.Abs(npc.Center.X - actor.Center.X) <= reachX &&
                 Math.Abs(npc.Bottom.Y - actor.Bottom.Y) <= 28f &&

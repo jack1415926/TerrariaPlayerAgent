@@ -12,6 +12,8 @@
     <Compile Include="..\..\Common\MultiplayerAttackPolicy.cs" Link="MultiplayerAttackPolicy.cs" />
     <Compile Include="..\..\Common\MultiplayerTestEquipPolicy.cs" Link="MultiplayerTestEquipPolicy.cs" />
     <Compile Include="..\..\Common\StartingKit.cs" Link="StartingKit.cs" />
+    <Compile Include="..\..\Common\WoodCollectionPolicy.cs" Link="WoodCollectionPolicy.cs" />
+    <Compile Include="..\..\Common\RequestMailbox.cs" Link="RequestMailbox.cs" />
   </ItemGroup>
 
 </Project>

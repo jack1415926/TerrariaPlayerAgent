@@ -46,8 +46,8 @@ public sealed class LocalTestBridge : ModSystem
         if (Main.netMode != NetmodeID.SinglePlayer) return;
         if (++pollTicks % 3 != 0) return;
         // Stop has its own mailbox so it cannot be blocked by an Agent status/action request.
-        ProcessRequest("stop.json", true);
-        ProcessRequest("request.json", false);
+        ProcessRequest("stop", true);
+        ProcessRequest("request-single", false);
         PublishGoal();
         ReportGoalFiles();
     }
@@ -197,10 +197,10 @@ public sealed class LocalTestBridge : ModSystem
         catch (IOException) { }
     }
 
-    private void ProcessRequest(string filename, bool stopOnly)
+    private void ProcessRequest(string channel, bool stopOnly)
     {
-        string path = Path.Combine(directory, filename);
-        if (!File.Exists(path)) return;
+        string? path = RequestMailbox.Claim(directory, channel);
+        if (path == null) return;
 
         string id = "";
         try
@@ -209,7 +209,6 @@ public sealed class LocalTestBridge : ModSystem
                 ?? throw new InvalidDataException("Empty request.");
             // A multiplayer host may outlive the server while this client is at the main menu.
             if (request.agentMode == MultiplayerAgentBridge.ServerAgentMode) return;
-            File.Delete(path);
             id = request.id;
             if (!Guid.TryParse(id, out _) || request.command.Length > 700)
                 throw new InvalidDataException("Invalid request id or command.");
@@ -229,10 +228,9 @@ public sealed class LocalTestBridge : ModSystem
         }
         catch (Exception ex)
         {
-            // The request is consumed before execution: do not replay a failed action.
-            if (File.Exists(path)) File.Delete(path);
             Respond(id, new { id, ok = false, error = ex.Message });
         }
+        finally { RequestMailbox.Release(path); }
     }
 
     private string Execute(string command)

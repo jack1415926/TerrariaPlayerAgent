@@ -5,9 +5,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $directory = Join-Path (Split-Path $PSScriptRoot -Parent) '.local\tModLoader\TPA'
 if (-not (Test-Path -LiteralPath $directory)) { throw 'Start the test game with scripts/play.ps1 first.' }
-$request = Join-Path $directory 'request.json'
-if (Test-Path -LiteralPath $request) { throw 'A request is pending. Do not submit simultaneous commands.' }
 $id = [guid]::NewGuid().ToString()
+$channel = if ($Command.Trim() -eq '/tpa stop') { 'stop' } else { 'request-single' }
+$request = Join-Path $directory "$channel-$id.json"
 $response = Join-Path $directory "response-$id.json"
 $temporary = Join-Path $directory "$id.tmp"
 @{id=$id;command=$Command} | ConvertTo-Json -Compress | Set-Content -LiteralPath $temporary -Encoding utf8
@@ -24,8 +24,5 @@ while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
     }
     Start-Sleep -Milliseconds 50
 }
-if (Test-Path -LiteralPath $request) {
-    $pending = Get-Content -LiteralPath $request -Raw | ConvertFrom-Json
-    if ($pending.id -eq $id) { Remove-Item -LiteralPath $request }
-}
+Remove-Item -LiteralPath $request -ErrorAction SilentlyContinue
 throw 'No response from the game. Confirm scripts/play.ps1 was used. Execution outcome may be unknown; query status before retrying an action.'

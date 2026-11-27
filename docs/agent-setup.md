@@ -140,7 +140,7 @@ goto／home核对本次sequence和实际误差，挖掘核对本次目标、工�
 .\scripts\run-agent.ps1 -Stop
 ```
 
-stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动作或额外等待期间检查取消，后续动作带expectedStopRevision，游戏线程拒绝过期任务。旧任务清理也带版本，不覆盖新任务。迟到API响应不执行，但请求本身可能已在服务端完成／计费。
+单人 `stop-<id>.json` 独立优先处理，游戏侧更新 stopRevision。Agent 等待 API、动作或额外等待期间检查取消，后续动作带 expectedStopRevision，游戏线程拒绝过期任务。旧任务清理也带版本，不覆盖新任务。迟到 API 响应不执行，但模型请求本身可能已在服务端完成或计费。
 
 当前失焦暂停可能让入口不响应，停止超时只能说未确认；聚焦后先查状态，不盲目重发有副作用动作。
 

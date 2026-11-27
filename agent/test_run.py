@@ -445,12 +445,12 @@ class BridgeProtocolTests(unittest.TestCase):
         seen = {}
 
         def consume():
-            pending = self.directory / 'request.json'
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                if pending.exists():
-                    seen.update(json.loads(pending.read_text(encoding='utf-8')))
-                    pending.unlink()
+                if pending := next(self.directory.glob('request-single-*.json'), None):
+                    claimed = pending.rename(pending.with_suffix('.claimed'))
+                    seen.update(json.loads(claimed.read_text(encoding='utf-8')))
+                    claimed.unlink()
                     return
                 time.sleep(0.01)
 
@@ -460,6 +460,14 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(seen['command'], '/tpa mine 10 20')
         self.assertEqual(seen['expectedStopRevision'], 3)
         self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_timeout_only_withdraws_its_own_request(self):
+        other = self.directory / 'request-mp-other.json'
+        other.write_text('other request', encoding='utf-8')
+        with self.assertRaises(agent.Unreachable):
+            agent.game_request('status', context={'agentMode': 'multiplayer_server'})
+        self.assertEqual(list(self.directory.iterdir()), [other])
+        self.assertEqual(other.read_text(encoding='utf-8'), 'other request')
 
 
 class HostTests(unittest.TestCase):

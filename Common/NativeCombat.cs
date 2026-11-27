@@ -84,13 +84,18 @@ public sealed class NativeCombat : ModSystem
         player.HeldItem.useStyle == ItemUseStyleID.Swing &&
         !player.HeldItem.noMelee && player.HeldItem.shoot <= ProjectileID.None;
 
+    // The last chop can finish before the same swing reaches the native melee code.
+    private static bool HasServerSwingPose(Player player, Item item) => Main.netMode == NetmodeID.Server &&
+        (item.type == ItemID.IronBroadsword && IsServerSwing(player) || NativeMining.SupportedAxe(item));
+
     private static bool IsServerShortsword(Player player) => Main.netMode == NetmodeID.Server &&
         player.HeldItem.type == ItemID.CopperShortsword;
 
     private static void PlayInstruments(On_Player.orig_ItemCheck_PlayInstruments orig, Player player, Item item)
     {
         // The server-side swing enters owner-only code, where instrument input expects a local client.
-        if (Main.dedServ && IsServerSwing(player) && IsAuthoritativeActor(player)) return;
+        if (Main.dedServ && (IsServerSwing(player) || NativeMining.ActiveChop(player)) &&
+            IsAuthoritativeActor(player)) return;
         orig(player, item);
     }
 
@@ -98,7 +103,7 @@ public sealed class NativeCombat : ModSystem
     {
         OwnerRule.Melee => IsSinglePlayerMelee(player) || IsServerSwing(player) ||
             NativeMining.Active(player),
-        OwnerRule.ServerSwing => IsServerSwing(player),
+        OwnerRule.ServerSwing => HasServerSwingPose(player, player.HeldItem),
         OwnerRule.Ranged => IsServerShortsword(player),
         OwnerRule.Supported => IsSinglePlayerMelee(player) || IsServerSwing(player) ||
             IsServerShortsword(player) || NativeMining.Active(player),
@@ -187,7 +192,7 @@ public sealed class NativeCombat : ModSystem
         cursor.Emit(OpCodes.Ldarg_2);
         // The native melee hitbox is anchored at the item location computed by this routine.
         cursor.EmitDelegate<Func<bool, Player, Item, bool>>((dedicated, player, item) =>
-            dedicated && !(item.type == ItemID.IronBroadsword && IsServerSwing(player) && IsAuthoritativeActor(player)));
+            dedicated && !(HasServerSwingPose(player, item) && IsAuthoritativeActor(player)));
     }
 
     private static void ExtendOwnerCheck(ILContext il, bool last, OwnerRule rule)

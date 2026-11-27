@@ -183,17 +183,15 @@ def game_request(command, expected_revision=None, context=None):
     directory = MAILBOX
     if not directory.is_dir():
         raise RuntimeError("Start scripts/play.ps1 and enter the test world first.")
-    pending = directory / ("stop.json" if command == "/tpa stop" and
-                           (context or {}).get("agentMode") != "multiplayer_server" else "request.json")
-    if pending.exists():
-        raise RuntimeError("Another game request is pending; use only one controller.")
+    multiplayer = (context or {}).get("agentMode") == "multiplayer_server"
+    channel = "request-mp" if multiplayer else "stop" if command == "/tpa stop" else "request-single"
     identity = str(uuid.uuid4())
+    pending = directory / f"{channel}-{identity}.json"
     temporary = directory / f"{identity}.tmp"
     response = directory / f"response-{identity}.json"
     temporary.write_text(json.dumps({**(context or {}), "id": identity, "command": command,
                                     "expectedStopRevision": expected_revision}), encoding="utf-8")
     try:
-        # Windows rename refuses to overwrite another controller's pending request.
         temporary.rename(pending)
     finally:
         temporary.unlink(missing_ok=True)
@@ -208,10 +206,11 @@ def game_request(command, expected_revision=None, context=None):
                 raise TaskInterrupted(result["reply"], observation(result))
             return result
         time.sleep(0.05)
-    if pending.exists() and json.loads(pending.read_text(encoding="utf-8-sig")).get("id") == identity:
+    try:
         pending.unlink()
-        raise Unreachable("The game did not answer; the request was not executed.", executed=False)
-    raise OutcomeUnknown("The game took the request but did not answer; its outcome is unknown.")
+    except OSError as exc:
+        raise OutcomeUnknown("The request could not be withdrawn; its outcome is unknown.") from exc
+    raise Unreachable("The game did not answer; the request was not executed.", executed=False)
 
 
 def mode_request(mode, command="status", expected_revision=None, context=None):
@@ -232,7 +231,7 @@ def observation(result):
     compact = {key: state.get(key) for key in
                ("agentMode", "gameMenu", "netMode", "paused", "focused", "worldSession",
                 "tick", "stopRevision", "player", "actor", "controllerSlot", "controllerToken", "goalId", "hostSession",
-                "attackTargetSlot", "attackTarget", "attackTargetKind", "attackWeapon", "attackHit")}
+                "attackTargetSlot", "attackTarget", "attackTargetKind", "attackWeapon", "attackHit", "woodCollection")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
@@ -800,6 +799,9 @@ def probe(args, report):
         "actor": {key: actor.get(key) for key in
                   ("slot", "generation", "active", "x", "y", "velocityX", "velocityY", "life", "dead")},
     }
+    if state.get("woodCollection"):
+        summary["woodCollection"] = {key: state["woodCollection"].get(key)
+                                     for key in ("id", "status", "requested", "acquired", "reason")}
     print("Probe: " + json.dumps(summary, ensure_ascii=False), flush=True)
     report.update(mode="probe", outcome="probe_ok", agent_mode=args.agent_mode, state=state)
 

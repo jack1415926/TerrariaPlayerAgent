@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Xna.Framework;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using Terraria;
@@ -17,14 +18,25 @@ public sealed class NativeMining : ModSystem
     private string status = "idle", reason = "";
     private readonly List<object> events = new();
     private Player? miner;
-    internal static bool Active(Player player) => Main.netMode == NetmodeID.SinglePlayer &&
-        ReferenceEquals(player, ModContent.GetInstance<DemoPlayerSystem>().Actor) &&
-        ModContent.GetInstance<NativeMining>().Ticks > 0;
+    private bool chopping, inChopCall;
+    internal string Result => status;
+    internal string Reason => reason;
+    internal static bool Active(Player player) =>
+        (Main.netMode == NetmodeID.SinglePlayer &&
+            ReferenceEquals(player, ModContent.GetInstance<DemoPlayerSystem>().Actor) &&
+            ModContent.GetInstance<NativeMining>().Ticks > 0) || ActiveChop(player);
+
+    internal static bool ActiveChop(Player player) =>
+        Main.netMode == NetmodeID.Server && !player.dead && SupportedAxe(player.HeldItem) &&
+        NativeCombat.IsAuthoritativeActor(player) &&
+        ModContent.GetInstance<NativeMining>() is { Ticks: > 0, chopping: true } mining &&
+        ReferenceEquals(mining.miner, player);
 
     public override void Load()
     {
         IL_Player.ItemCheck_Inner += EnterOwnerOnly;
         On_Player.ItemCheck_UseMiningTools += UseMiningTools;
+        On_Player.ItemCheck_UseMiningTools_ActuallyUseMiningTool += UseTool;
         On_Player.PickTile += PickTile;
     }
 
@@ -32,6 +44,7 @@ public sealed class NativeMining : ModSystem
     {
         IL_Player.ItemCheck_Inner -= EnterOwnerOnly;
         On_Player.ItemCheck_UseMiningTools -= UseMiningTools;
+        On_Player.ItemCheck_UseMiningTools_ActuallyUseMiningTool -= UseTool;
         On_Player.PickTile -= PickTile;
     }
 
@@ -66,6 +79,40 @@ public sealed class NativeMining : ModSystem
     private static bool InRange(Player player, int x, int y) => InBounds(x, y) &&
         AtTarget(x, y, () => player.IsTargetTileInItemRange(player.HeldItem));
 
+    internal static bool SupportedAxe(Item item) => !item.IsAir && item.axe > 0 && item.pick == 0 &&
+        item.hammer == 0 && item.shoot <= ProjectileID.None && item.useStyle == ItemUseStyleID.Swing;
+
+    internal static bool IsForestTree(int x, int y)
+    {
+        if (!InBounds(x, y) || y < 2) return false;
+        Tile trunk = Main.tile[x, y], above = Main.tile[x, y - 1], ground = Main.tile[x, y + 1];
+        if (!trunk.HasTile || trunk.IsActuated || trunk.TileType != TileID.Trees ||
+            !above.HasTile || above.IsActuated || above.TileType != TileID.Trees ||
+            !ground.HasTile || ground.IsActuated || ground.TileType != TileID.Grass)
+            return false;
+        // Exclude side-root and branch frames before the native bottom lookup.
+        int frameX = trunk.TileFrameX / 22, frameY = trunk.TileFrameY / 22;
+        if (frameX == 3 && (frameY <= 2 || frameY >= 9) ||
+            frameX == 4 && frameY is >= 3 and <= 5 ||
+            frameX == 1 && frameY is >= 6 and <= 8 ||
+            frameX == 2 && frameY >= 6)
+            return false;
+        WorldGen.GetTreeBottom(x, y, out int bottomX, out int bottomY);
+        return bottomX == x && bottomY == y + 1 && WorldGen.CanKillTile(x, y);
+    }
+
+    internal static bool CanReachTree(Player player, int x, int y) => InRange(player, x, y) &&
+        Collision.CanHitLine(player.position, player.width, player.height, new Vector2(x * 16 + 4, y * 16 + 4), 8, 8);
+
+    internal bool StartChop(Player player, int x, int y)
+    {
+        if (Main.netMode != NetmodeID.Server || !NativeCombat.IsAuthoritativeActor(player) ||
+            player.dead || player.noBuilding || !SupportedAxe(player.HeldItem) ||
+            !IsForestTree(x, y) || !CanReachTree(player, x, y)) return false;
+        Begin(player, x, y, 600, true);
+        return true;
+    }
+
     internal bool Start(Player player, int x, int y, int ticks, out string message)
     {
         message = "Select a swing pickaxe first (pick > 0, no projectile).";
@@ -77,11 +124,19 @@ public sealed class NativeMining : ModSystem
         if (!tile.HasTile || tile.IsActuated) return false;
         message = $"native_cannot_kill_tile: ({x},{y}) is protected by world rules; above={TileName(x, y - 1)}. Choose another candidate.";
         if (!WorldGen.CanKillTile(x, y)) return false;
+        Begin(player, x, y, ticks, false);
+        message = $"Mining tile ({x},{y}) with {player.HeldItem.Name} for at most {ticks / 60.0:F2} simulation seconds.";
+        return true;
+    }
+
+    private void Begin(Player player, int x, int y, int ticks, bool chop)
+    {
         ModContent.GetInstance<DemoPlayerSystem>().Stop();
         miner = player;
+        chopping = chop;
         targetX = x;
         targetY = y;
-        initialType = tile.TileType;
+        initialType = Main.tile[x, y].TileType;
         itemType = player.HeldItem.type;
         pickPower = player.HeldItem.pick;
         attempts = 0;
@@ -91,8 +146,6 @@ public sealed class NativeMining : ModSystem
         reason = "";
         Ticks = ticks;
         player.releaseUseItem = true;
-        message = $"Mining tile ({x},{y}) with {player.HeldItem.Name} for at most {ticks / 60.0:F2} simulation seconds.";
-        return true;
     }
 
     internal void Cancel()
@@ -104,6 +157,7 @@ public sealed class NativeMining : ModSystem
     {
         Cancel();
         miner = null;
+        chopping = inChopCall = false;
         status = "idle";
         events.Clear();
     }
@@ -121,6 +175,7 @@ public sealed class NativeMining : ModSystem
 
     internal void PrepareInput(Player player)
     {
+        if (chopping && Ticks > 0 && ReferenceEquals(miner, player) && !ValidateChop(player)) return;
         if (!Active(player)) return;
         if (!InRange(player, targetX, targetY) || player.noBuilding)
         { Finish("blocked", "out_of_range_or_building_disabled"); return; }
@@ -131,6 +186,14 @@ public sealed class NativeMining : ModSystem
         player.direction = targetX * 16 + 8 < player.Center.X ? -1 : 1;
         player.controlUseItem = true;
         if (player.itemAnimation == 0) player.releaseUseItem = true;
+    }
+
+    private bool ValidateChop(Player player)
+    {
+        if (ActiveChop(player) && player.HeldItem.type == itemType && !player.noBuilding &&
+            IsForestTree(targetX, targetY) && CanReachTree(player, targetX, targetY)) return true;
+        Finish("blocked", "tree_tool_or_range_changed");
+        return false;
     }
 
     public override void PostUpdatePlayers()
@@ -144,13 +207,45 @@ public sealed class NativeMining : ModSystem
         { orig(player, item); return; }
         if (!Active(player)) return;
         var mining = ModContent.GetInstance<NativeMining>();
+        if (mining.chopping && !mining.ValidateChop(player)) return;
         AtTarget(mining.targetX, mining.targetY, () => { orig(player, item); return true; });
+    }
+
+    private static void UseTool(On_Player.orig_ItemCheck_UseMiningTools_ActuallyUseMiningTool orig,
+        Player player, Item item, out bool canHitWalls, int x, int y)
+    {
+        if (!ActiveChop(player))
+        {
+            orig(player, item, out canHitWalls, x, y);
+            return;
+        }
+        var mining = ModContent.GetInstance<NativeMining>();
+        if (x != mining.targetX || y != mining.targetY || !mining.ValidateChop(player))
+        {
+            canHitWalls = false;
+            return;
+        }
+        mining.inChopCall = true;
+        try { orig(player, item, out canHitWalls, x, y); }
+        finally { mining.inChopCall = false; }
+        mining.attempts++;
+        if (Main.tile[x, y].HasTile && Main.tile[x, y].TileType == TileID.Trees) return;
+        int left = Math.Max(0, x - 3), top = Math.Max(0, y - 32);
+        NetMessage.SendTileSquare(-1, left, top, Math.Min(7, Main.maxTilesX - left),
+            Math.Min(y + 3, Main.maxTilesY) - top);
+        mining.Finish("broken", "native_axe_removed_trunk");
+    }
+
+    internal void ObserveDrop(Item item, Point source)
+    {
+        if (inChopCall)
+            ModContent.GetInstance<MultiplayerAgentBridge>().ObserveWoodDrop(item, source);
     }
 
     private static void PickTile(On_Player.orig_PickTile orig, Player player, int x, int y, int power)
     {
         var mining = ModContent.GetInstance<NativeMining>();
-        bool tracked = Active(player) && x == mining.targetX && y == mining.targetY;
+        bool tracked = !mining.chopping && Active(player) && x == mining.targetX && y == mining.targetY;
         bool hadTile = tracked && Main.tile[x, y].HasTile;
         int beforeType = tracked ? Main.tile[x, y].TileType : -1;
         bool canKillBefore = tracked && WorldGen.CanKillTile(x, y);
@@ -171,7 +266,7 @@ public sealed class NativeMining : ModSystem
     internal object? Snapshot() => status == "idle" ? null : new
     {
         sequence, status, reason, ticks = Ticks, x = targetX, y = targetY, initialType,
-        item = itemType, pickPower, attempts,
+        item = itemType, pickPower, attempts, action = chopping ? "chop" : "pick",
         hasTileNow = InBounds(targetX, targetY) && Main.tile[targetX, targetY].HasTile,
         events = events.ToArray()
     };

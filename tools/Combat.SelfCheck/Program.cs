@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using TerrariaPlayerAgent.Common;
 
 namespace TerrariaPlayerAgent.SelfCheck;
@@ -17,11 +18,86 @@ internal static class Program
         CheckTestEquipGate();
         CheckDemoLifecycleContracts();
         CheckProbeAndNativeContracts();
+        CheckCollectionPolicy();
+        CheckRequestClaim();
 
         Console.WriteLine(failures == 0
             ? $"SELF-CHECK OK ({checks} checks)"
             : $"SELF-CHECK FAILED ({failures}/{checks})");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void CheckCollectionPolicy()
+    {
+        Check("resource goal recognizes a requested wood quantity",
+            WoodCollectionPolicy.Parse("请帮我收集 10 个木材。") == 10);
+        Check("resource goal supports common Chinese number forms",
+            WoodCollectionPolicy.Parse("采集二十三个木材") == 23 &&
+            WoodCollectionPolicy.Parse("帮我收集十个木材") == 10);
+        Check("ordinary short goals are unaffected",
+            WoodCollectionPolicy.Parse("跟随我") == null && WoodCollectionPolicy.Parse("攻击蓝史莱姆") == null);
+        Check("ambiguous or out-of-budget collection cannot fall through to a model goal",
+            WoodCollectionPolicy.Parse("收集 10 个木材然后返回") == 0 &&
+            WoodCollectionPolicy.Parse("采集 0 个木材") == 0 &&
+            WoodCollectionPolicy.Parse("采集 201 个木材") == 0 &&
+            WoodCollectionPolicy.Parse("收集十十个木材") == 0);
+        Check("a pickup is bounded by both actual ground removal and inventory gain",
+            WoodCollectionPolicy.Credit(8, 5, 7, 14) == 3 &&
+            WoodCollectionPolicy.Credit(8, 0, 7, 9) == 2);
+        Check("pre-existing inventory or a consumed world item gives no progress",
+            WoodCollectionPolicy.Credit(8, 0, 20, 20) == 0 &&
+            WoodCollectionPolicy.Credit(8, 8, 20, 30) == 0);
+        Check("stacked drops only credit definitely originating in this task",
+            WoodCollectionPolicy.OwnInTransfer(10, 6, 10) == 6 &&
+            WoodCollectionPolicy.OwnInTransfer(10, 6, 5) == 1 &&
+            WoodCollectionPolicy.OwnInTransfer(10, 6, 4) == 0 &&
+            WoodCollectionPolicy.OwnInTransfer(6, 6, 3) == 3);
+        var first = WoodCollectionPolicy.AssessPickup(10, 6, 5, 17, 22);
+        var second = WoodCollectionPolicy.AssessPickup(5, first.ownLeft, 0, 22, 27);
+        Check("taking an entire mixed stack in two native pickups credits all task wood exactly once",
+            first == (1, 5) && second == (5, 0));
+        Check("wood removed without entering the inventory cannot be credited later",
+            WoodCollectionPolicy.AssessPickup(10, 6, 5, 17, 17) == (0, 1));
+        Check("partial inventory gain and unverified removal keep at most the remaining wood",
+            WoodCollectionPolicy.AssessPickup(10, 6, 4, 17, 22) == (1, 4));
+    }
+
+    private static void CheckRequestClaim()
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            string single = Path.Combine(directory.FullName, "request-single-first.json");
+            string multiplayer = Path.Combine(directory.FullName, "request-mp-second.json");
+            File.WriteAllText(single, "first action");
+            File.Delete(single);
+            File.WriteAllText(multiplayer, "second action");
+            Check("withdrawing a request before claim prevents its execution and preserves other channels",
+                RequestMailbox.Claim(directory.FullName, "request-single") == null && File.Exists(multiplayer));
+
+            string? claimed = RequestMailbox.Claim(directory.FullName, "request-mp");
+            Check("a claimed request is no longer pending or claimable again",
+                claimed != null && !File.Exists(multiplayer) && File.ReadAllText(claimed) == "second action" &&
+                RequestMailbox.Claim(directory.FullName, "request-mp") == null);
+            if (claimed != null) RequestMailbox.Release(claimed);
+            Check("claim cleanup leaves the mailbox empty", directory.GetFiles().Length == 0);
+
+            File.WriteAllText(single, "racing action");
+            string withdrawn = single + ".withdrawn";
+            string? racingClaim = null;
+            Parallel.Invoke(
+                () => racingClaim = RequestMailbox.Claim(directory.FullName, "request-single"),
+                () =>
+                {
+                    try { File.Move(single, withdrawn, overwrite: true); }
+                    catch (FileNotFoundException) { }
+                });
+            Check("only one side wins a concurrent claim and withdrawal",
+                (racingClaim != null) != File.Exists(withdrawn));
+            if (racingClaim != null) RequestMailbox.Release(racingClaim);
+            File.Delete(withdrawn);
+        }
+        finally { directory.Delete(recursive: false); }
     }
 
     private static void CheckCommandParsing()

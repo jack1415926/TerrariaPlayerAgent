@@ -32,7 +32,8 @@ C# 12／.NET 8的独立tModLoader模组负责角色和原生连续控制；Pytho
 | Common/DemoPlayerSystem.cs | 独立Player槽位、生命周期、输入、跨坎／恢复、库存与敌怪观察、战斗事件；同文件DemoUpdateProbe补接触伤害并计更新数 |
 | Common/GroundNavigation.cs | 水平目标、home／活动边界、刹停判断、目标状态和sequence；不计算完整路径 |
 | Common/LocalTerrain.cs | 局部碰撞探测和17×11格观察 |
-| Common/NativeMining.cs | 普通挥动镐原生接入、范围／保护条件、候选、原生PickTile前后事件和取消 |
+| Common/NativeMining.cs | 单人原生镐与多人受控斧头，原生范围／保护条件、固定工具目标、结果及取消 |
+| Common/WoodCollection.cs、WoodCollectionPolicy.cs | 多人局部木材任务、有限重试、原生掉落归因和实际拾取增量 |
 | Commands/DemoCommand.cs | /tpa参数、单人限制、明确接受或拒绝；操作真人与受控AI分离；`/tpa goal`把目标文本交给宿主邮箱；stop／remove清掉待发目标 |
 | Common/LocalTestBridge.cs | -tpatest下的文件请求、停止优先通道、版本检查与状态；`/tpa goal`先RequestStop抢占、按入队时的stopRevision／worldSession发布goal（新目标覆盖待发目标），按id过滤过期结果，并用host-ready心跳判断宿主是否在线；复用命令层，不开网络端口 |
 | Common/MultiplayerProbe.cs、DisplaySync.cs | 真人 Player／Socket 控制归属，服务器命令／反馈包、客户端镜像、有界平滑和持有物显示；不复制怪物选敌逻辑 |
@@ -70,7 +71,9 @@ range 1–100格以当前AI的X建立home和左右边界，off解除；设置会
 
 挖掘走ItemCheck_Inner → ItemCheck_OwnerOnlyCode → ItemCheck_UseMiningTools → PickTile；仅在本AI挖掘激活时放行必要归属分支。tileTargetX/Y是共享字段，范围检查和挖掘调用内短暂替换、finally恢复；不动真人鼠标。复用原生冷却、强度与方块规则，CanKillTile=false的支撑等目标不推荐且立即拒绝。
 
-单人原生 `PickTile` 前后记录坐标、工具、类型／存在性和 `broken`。多人起步装备使用 `StartingInventory`，已实测铜短剑、铜镐、铜斧各一件。拾取依赖原生物品预约与背包空间，地面剩余堆叠由原生网络包同步，服务器状态桥可核对入包。战斗换装只选择现有背包中符合任务要求的武器。多人挖除→掉落→拾取仍待交付。
+单人原生 `PickTile` 前后记录坐标、工具、类型／存在性和 `broken`。多人起步装备使用 `StartingInventory`，已实测铜短剑、铜镐、铜斧各一件。拾取依赖原生物品预约与背包空间，地面剩余堆叠由原生网络包同步，服务器状态桥可核对入包。战斗换装只选择现有背包中符合任务要求的武器。
+
+多人木材目标与其他目标共用服务器控制权及停止链路。C# 搜索局部普通森林树、复用水平导航和原生斧头输入，并把服务器实际入包的任务木材计入进度。宿主心跳参与权限校验，采集步骤由游戏事实驱动。制作和存档调查及未验边界见 [资源成长设计](v1-growth-design.md)。
 
 ## Agent与开发入口
 
