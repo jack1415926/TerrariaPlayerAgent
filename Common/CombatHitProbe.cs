@@ -1,4 +1,5 @@
 using Terraria;
+using Terraria.DataStructures;
 using Terraria.ID;
 using Terraria.ModLoader;
 
@@ -8,6 +9,14 @@ namespace TerrariaPlayerAgent.Common;
 // client-only, so the authoritative record comes from the GlobalNPC hook.
 public sealed class CombatHitProbe : GlobalNPC
 {
+    public override bool InstancePerEntity => true;
+    internal object? SpawnIdentity { get; private set; }
+
+    public override void OnSpawn(NPC npc, IEntitySource source)
+    {
+        SpawnIdentity = new object();
+    }
+
     public override void OnHitByProjectile(NPC npc, Projectile projectile, NPC.HitInfo hit, int damageDone)
     {
         if (Main.netMode != NetmodeID.Server) return;

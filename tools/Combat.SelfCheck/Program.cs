@@ -59,12 +59,19 @@ internal static class Program
             MultiplayerAttackPolicy.Validate(true, true, true, true, StartingKit.CopperShortsword, -1, 1) == null);
         Check("iron broadsword swing is accepted",
             MultiplayerAttackPolicy.Validate(true, true, true, true, MultiplayerAttackPolicy.IronBroadsword, 1, 1) == null);
-        Check("dummy goal cannot substitute copper shortsword for the requested iron broadsword",
-            MultiplayerAttackPolicy.ValidateDummyGoal("切换铁阔剑，然后攻击傀儡", StartingKit.CopperShortsword) != null);
-        Check("dummy goal requires the copper shortsword to be selected",
-            MultiplayerAttackPolicy.ValidateDummyGoal("攻击最近的傀儡", MultiplayerAttackPolicy.IronBroadsword) != null);
-        Check("dummy goal accepts attacking with the selected copper shortsword",
-            MultiplayerAttackPolicy.ValidateDummyGoal("用手上的铜短剑打中傀儡一次", StartingKit.CopperShortsword) == null);
+        Check("named iron broadsword requirement overrides the selected copper shortsword",
+            MultiplayerAttackPolicy.ResolveGoalWeapon("切换铁阔剑，然后攻击傀儡", StartingKit.CopperShortsword) ==
+            MultiplayerAttackPolicy.IronBroadsword);
+        Check("unqualified goal uses the selected supported weapon",
+            MultiplayerAttackPolicy.ResolveGoalWeapon("攻击最近的傀儡", MultiplayerAttackPolicy.IronBroadsword) ==
+            MultiplayerAttackPolicy.IronBroadsword);
+        Check("named copper shortsword requirement is recognized",
+            MultiplayerAttackPolicy.ResolveGoalWeapon("用手上的铜短剑打中傀儡一次", StartingKit.CopperShortsword) ==
+            StartingKit.CopperShortsword);
+        Check("unsupported and ambiguous weapon requests are rejected",
+            MultiplayerAttackPolicy.ResolveGoalWeapon("换成木剑，然后攻击傀儡", StartingKit.CopperShortsword) == 0 &&
+            MultiplayerAttackPolicy.ResolveGoalWeapon("换武器后攻击傀儡", StartingKit.CopperShortsword) == 0 &&
+            MultiplayerAttackPolicy.ResolveGoalWeapon("先用铜短剑，再换铁阔剑打傀儡", StartingKit.CopperShortsword) == 0);
         Check("unsupported attack item is rejected",
             MultiplayerAttackPolicy.Validate(true, true, true, true, 24, 1, 1) != null);
         Check("non-controller is rejected",

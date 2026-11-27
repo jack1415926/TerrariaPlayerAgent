@@ -8,6 +8,16 @@
 
 如果只需复测第一击和端到端反馈，宿主使用 `-MaxGoals 1`。重复真人短目标则使用常驻宿主。空挥、取消和过期射弹的受控测试见下方离线入口。
 
+## 换装与蓝史莱姆合并验收（待实机）
+
+使用 `play.ps1 -MultiplayerAgent` 和常驻多人宿主。准备平地、一个已激活傀儡，以及由真人正常取得的铁阔剑。
+
+1. AI 背包只有起步物品时提交 `/tpamp goal 换到铁阔剑，然后攻击傀儡`。确认反馈缺铁阔剑，AI 没有出招。
+2. 真人把铁阔剑丢到 AI 脚边并退开。确认物品入包，再原样提交目标。对照目标报告中的 `select`、选中槽位与 `item-hit`，确认武器类型为 4、NPC 是绑定傀儡、攻击者为 AI，随后停手。
+3. 同层引一只蓝史莱姆到 AI 附近，距 AI 不超过 240 像素，留出退路。提交 `/tpamp goal 换到铜短剑，靠近蓝史莱姆，打中一次然后退避`。用同一报告核对最新敌怪方位、指定 NPC 的铜短剑命中及退避导航到位。敌怪若被这一击打倒仍应退避。仅命中或退路受阻时，结果应体现退避尚未确认。
+
+可在同一世界继续复测默认铜短剑打傀儡，以及攻击或退避中输入 `/tpamp stop` 后旧动作是否清零。上述新增场景尚无实机结果。
+
 ## 多人武器与拾取回归
 
 1. 用 `scripts/play.ps1 -MultiplayerAgent -MultiplayerTestEquip` 启动独立配置，一名真人通过「开服并游玩」进入测试世界。固定傀儡摆在平地，真人不攻击该靶。
@@ -16,6 +26,15 @@
 4. 在 AI 脚边丢一小份普通物品，真人退开。检查物品离开地面，并对照两次服务器背包快照。已验证墓碑入包；需要精确计量时用已知数量的独立堆叠。活怪用于验证击杀、接触伤害、死亡和重生。
 
 未验场景为 Host & Play 中限时 Buff 的递减与到期清除。此项与战斗和拾取可在同一名真人＋一个 AI 的世界中进行。当前没有专门的 Buff 施加或回归脚本。
+
+## 地表同行与近敌应战（待实机）
+
+用 `play.ps1 -MultiplayerAgent` 开启 Host & Play。生成者用 `/tpamp spawn` 生成 AI。同行命令在服务器执行，可以直接使用。控制模型短目标时仍需启动 Python 宿主。
+
+1. 输入 `/tpamp goal 跟随我`，沿带小坎的地表走一段，中途折返，确认 AI 朝新位置调整。依次发 `/tpamp goal 原地等候` 和 `/tpamp goal 继续跟随`，用 `/tpamp status` 核对状态和实际移动。
+2. 在跟随中引一只近身敌怪。先确认敌怪从无遮挡方向接近会触发原生攻击，再让同样距离的敌怪出现在完整实墙另一侧，确认没有新的攻击输入。AI 用手上支持的武器原地反击，并在出招后继续跟随。
+3. 在应战中发 `/tpamp goal 回来`，确认停止发出新的攻击输入，靠近玩家后原地等候。用 `/tpamp stop` 中断跟随或回来，确认旧路线和出招不会恢复。已经发出的原生攻击或射弹可自然结束。
+4. 让玩家和 AI 分居高墙两侧，水平距离小于 48 像素时发「回来」。确认没有隔墙报告到达，原生跨越尝试失败后停下并说明受阻。
 
 ## 多人目标替换与停止
 
@@ -37,14 +56,14 @@ $env:TPA_TEST_MAILBOX = "$PWD\.local\test-mailbox"
 python -B -m unittest discover -s agent -p test_run.py -v
 ```
 
-本轮仓库内 77 项 Python 检查通过。本机额外验证留在被忽略的 `.local/research`，涉及实际程序集和本机环境。
+本批仓库内 78 项 Python 检查通过，新增换装、指定武器命中、目标被击倒后仍可退避的受控流程。本机历史额外验证留在被忽略的 `.local/research`，涉及实际程序集和本机环境。
 
 C# 自检同样可脱离游戏和 API 运行。
 
 ```powershell
 dotnet run --project tools/InventorySync.SelfCheck -c Release   # 37项：HeldItemWire布局、三件清单与失败处理
 dotnet run --project tools/DisplaySync.SelfCheck -c Release    # 110项：显示同步回归
-dotnet run --project tools/Combat.SelfCheck -c Release         # 63项：攻击命令、身份、武器要求与生命周期
+dotnet run --project tools/Combat.SelfCheck -c Release         # 64项：攻击命令、身份、武器要求与生命周期
 ```
 
 InventorySync使用`tools/InventorySync.SelfCheck/TerrariaShim.cs`的本地最小`Item`／`Player`／`PlayerLoader`替身，因此只验证清单、槽位放置和调用点，不验证真实发放、客户端绘制或重生保留；其中单一调用点检查会从构建目录向上找到仓库根并读取`Common/DemoPlayerSystem.cs`，需在仓库内运行。

@@ -8,6 +8,7 @@ internal sealed class GroundNavigation
 {
     internal const float Tolerance = 8;
     internal bool Active { get; private set; }
+    internal bool Failed => status is "blocked" or "timeout";
     internal bool Bounded { get; private set; }
     internal float HomeX { get; private set; }
     private float minX, maxX, targetX, startX;

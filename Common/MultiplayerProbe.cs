@@ -126,7 +126,11 @@ public sealed class MultiplayerProbe : ModSystem
             Mod.Logger.Info($"[TPA-MP] request sender={sender}, action={action}, value={value}");
             string reply;
             if (action == "status")
+            {
                 reply = Demo.Status(Main.player[sender]);
+                if (Demo.Actor != null && ModContent.GetInstance<MultiplayerAgentBridge>().CompanionStatus is { } status)
+                    reply += $" 同行状态：{status}。";
+            }
             else if (controller >= 0 && (!ControllerValid || controller != sender))
                 reply = "Only the player who spawned this probe can control it.";
             else if (action == "spawn")

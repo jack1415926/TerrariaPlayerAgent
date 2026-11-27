@@ -65,18 +65,20 @@ TOOL = {
 
 
 MULTIPLAYER_COMMAND = re.compile(r"(?:status|/tpa stop|/tpa (?:left|right)(?: [0-9]+(?:\.[0-9]+)?)?"
-                                 r"|/tpa approach|/tpa attack (?:left|right)(?: 1)?)")
+                                 r"|/tpa (?:approach|retreat)|/tpa select [0-9]{1,2}|/tpa attack (?:left|right)(?: 1)?)")
 MULTIPLAYER_TOOL = {"type": "function", "function": {**TOOL["function"], "description":
      "每次只选一个动作：status、/tpa left [秒数]、/tpa right [秒数]、/tpa stop，"
-     "或 /tpa approach、/tpa attack left 1、/tpa attack right 1。移动默认2秒，最多3秒。"
-     "/tpa approach 在同层时一次走到分配的傀儡跟前，由游戏按位置减速停步，最多3秒。"
-     "攻击仅用于已分配固定傀儡并手持铜短剑的任务。wait_seconds可省略，默认0。",
+     "或 /tpa select 槽位、/tpa approach、/tpa attack left 1、/tpa attack right 1、/tpa retreat。"
+     "战斗任务从 inventory 选取与 attackWeapon 匹配的已有武器。approach 根据指定目标的当前位置靠近，"
+     "蓝史莱姆任务命中后用 retreat 退避；固定傀儡命中后自动结束。wait_seconds 可省略，默认0。",
      "parameters": {**TOOL["function"]["parameters"], "properties": {
          **TOOL["function"]["parameters"]["properties"],
          "commands": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1},
      }}}}
-MAX_DUMMY_TURNS = 6
-MAX_DUMMY_ATTACKS = 3
+MAX_COMBAT_TURNS = 6
+MAX_SLIME_TURNS = 8
+MAX_COMBAT_ATTACKS = 3
+COMBAT_WEAPONS = {3507: "铜短剑", 4: "铁阔剑"}
 
 
 def validate_actions(arguments, agent_mode="singleplayer"):
@@ -230,7 +232,7 @@ def observation(result):
     compact = {key: state.get(key) for key in
                ("agentMode", "gameMenu", "netMode", "paused", "focused", "worldSession",
                 "tick", "stopRevision", "player", "actor", "controllerSlot", "controllerToken", "goalId", "hostSession",
-                "attackTargetSlot", "attackTarget")}
+                "attackTargetSlot", "attackTarget", "attackTargetKind", "attackWeapon", "attackHit")}
     if compact["actor"]:
         compact["actor"] = dict(compact["actor"])
         compact["actor"]["combatEvents"] = compact["actor"].get("combatEvents", [])[-12:]
@@ -239,9 +241,12 @@ def observation(result):
 
 def multiplayer_model_state(state):
     actor = state.get("actor") or {}
-    return {"tick": state["tick"], "attackTarget": state.get("attackTarget"), "actor": {
-        key: actor[key] for key in ("x", "y", "velocityX", "life", "dead", "item", "direction",
-                                   "moveTicks", "attackTicks", "itemAnimation", "blockedReason") if key in actor}}
+    return {"tick": state["tick"], "attackTarget": state.get("attackTarget"),
+            "attackTargetKind": state.get("attackTargetKind"), "attackWeapon": state.get("attackWeapon"),
+            "attackHit": state.get("attackHit"), "actor": {
+                key: actor[key] for key in ("x", "y", "velocityX", "life", "dead", "item", "selectedSlot", "inventory",
+                                           "direction", "moveTicks", "attackTicks", "itemAnimation", "blockedReason")
+                if key in actor}}
 
 
 class TaskControl:
@@ -257,6 +262,8 @@ class TaskControl:
         self.agent_mode = state.get("agentMode") or "singleplayer"
         self.identity = multiplayer_identity(state) if self.agent_mode == "multiplayer_server" else None
         self.target_slot = state.get("attackTargetSlot")
+        self.slime_trial = state.get("attackTargetKind") == "slime"
+        self.weapon = state.get("attackWeapon")
         self.attack_attempts = 0
         self.target_hit = None
         self.last_model_observation = None
@@ -281,8 +288,8 @@ class TaskControl:
             raise TaskInterrupted("The configured game world is no longer running.")
         if self.identity is not None and multiplayer_identity(self.state) != self.identity:
             raise TaskInterrupted("The multiplayer goal, controller or AI identity changed.")
-        if self.target_slot is not None and not self.state.get("attackTarget"):
-            raise TaskInterrupted("指定傀儡已消失。", self.state)
+        if self.target_slot is not None and not (self.state.get("attackTarget") or self.state.get("attackHit")):
+            raise TaskInterrupted("指定战斗目标已消失。", self.state)
         if self.world_session and self.state.get("worldSession") and self.state["worldSession"] != self.world_session:
             raise TaskInterrupted("The world session changed; this task no longer owns the world.")
         if self.state["paused"]:
@@ -365,16 +372,19 @@ class TaskControl:
                     any(actor[key] != actor_before[key] for key in ("deathCount", "respawnCount"))):
                 raise TaskInterrupted("AI died or was replaced; remaining actions cancelled.")
             if attack_sequence is not None:
-                hit = next((event for event in self.events if event.get("kind") == "projectile-hit" and
-                            event.get("attackSequence") == attack_sequence and event.get("tick", -1) >= start and
-                            event.get("npc") == self.target_slot and event.get("projectile") == 938 and
-                            event.get("attacker") == event.get("projectileOwner") == actor["slot"] and
-                            event.get("damage", 0) > 0), None)
-                if hit is not None:
+                hit = state.get("attackHit") or {}
+                matching_weapon = (
+                    self.weapon == 3507 and hit.get("kind") == "projectile-hit" and
+                    hit.get("projectile") == 938 and hit.get("projectileOwner") == self.actor_slot
+                ) or (self.weapon == 4 and hit.get("kind") == "item-hit" and hit.get("item") == self.weapon)
+                if (matching_weapon and hit.get("attackSequence") == attack_sequence and hit.get("tick", -1) >= start
+                        and hit.get("npc") == self.target_slot and hit.get("attacker") == self.actor_slot
+                        and hit.get("damage", 0) > 0):
                     self.target_hit = hit
                     if actor.get("attackTicks", 0):
                         raise OutcomeUnknown("The server recorded the hit without ending the attack input.")
-                    return state
+                    if not self.slime_trial or actor.get("itemAnimation", 0) == 0:
+                        return state
             active = action and _active(actor)
             if not active and state["tick"] - start >= math.ceil(seconds * 60):
                 return state
@@ -401,7 +411,7 @@ def chat_interruptibly(messages, control):
         if control.agent_mode == "multiplayer_server" and messages:
             current = {**multiplayer_model_state(control.state),
                        "modelRequestsRemaining": control.model_requests_remaining,
-                       "attackAttemptsRemaining": (MAX_DUMMY_ATTACKS - control.attack_attempts
+                       "attackAttemptsRemaining": (MAX_COMBAT_ATTACKS - control.attack_attempts
                                                    if control.target_slot is not None else 0)}
             control.last_model_observation = current
             goal = {**messages[1], "content": messages[1]["content"] +
@@ -458,16 +468,15 @@ def _execute_actions(commands, wait, control, actions):
             entry["observationBefore"] = multiplayer_model_state(before)
         actions.append(entry)
         if command == "/tpa approach" and control.target_slot is None:
-            entry.update(status="rejected", reason="靠近动作需要已分配的固定傀儡。", state=before)
+            entry.update(status="rejected", reason="靠近动作需要已分配的战斗目标。", state=before)
             break
         if server_attack:
             previous = before.get("actor") or {}
-            if (control.target_slot is None or control.attack_attempts >= MAX_DUMMY_ATTACKS or
-                    previous.get("item") != 3507 or previous.get("itemAnimation", 0) != 0):
-                entry.update(status="rejected", reason="攻击需要指定傀儡、已就绪的铜短剑和剩余次数。", state=before)
+            if (control.target_slot is None or control.attack_attempts >= MAX_COMBAT_ATTACKS or
+                    control.weapon not in COMBAT_WEAPONS or previous.get("item") != control.weapon or
+                    previous.get("itemAnimation", 0) != 0):
+                entry.update(status="rejected", reason="攻击需要指定目标、已就绪的指定武器和剩余次数。", state=before)
                 break
-            control.attack_attempts += 1
-            entry["attempt"] = control.attack_attempts
         reply = control.request(command, control.revision)
         control.update(reply)
         if command == "/tpa stop":
@@ -477,10 +486,12 @@ def _execute_actions(commands, wait, control, actions):
             entry.update(status="rejected", state=control.state)
             break
         parts = command.split()
-        timed = len(parts) > 1 and parts[1] in ("left", "right", "attack", "jump", "down", "mine", "goto", "home", "approach")
+        timed = len(parts) > 1 and parts[1] in ("left", "right", "attack", "jump", "down", "mine", "goto", "home", "approach", "retreat")
         previous = before.get("actor")
         sequence = None
         if server_attack:
+            control.attack_attempts += 1
+            entry["attempt"] = control.attack_attempts
             sequence = (control.state.get("actor") or {}).get("attackSequence")
             if type(sequence) is not int or sequence == previous.get("attackSequence"):
                 raise OutcomeUnknown("Attack input was accepted without a new server attack sequence.")
@@ -488,7 +499,7 @@ def _execute_actions(commands, wait, control, actions):
         after = (control.wait(action=True, actor_before=previous, attack_sequence=sequence) if timed else control.state)
         actor = after.get("actor")
         entry.update(status="completed", end_tick=after["tick"], state=after)
-        if len(parts) > 1 and parts[1] in ("goto", "home", "approach"):
+        if len(parts) > 1 and parts[1] in ("goto", "home", "approach", "retreat"):
             nav = (actor or {}).get("navigation") or {}
             previous_nav = (before.get("actor") or {}).get("navigation") or {}
             entry["navigation"] = nav
@@ -498,6 +509,10 @@ def _execute_actions(commands, wait, control, actions):
             if not arrived:
                 entry.update(status="blocked" if nav.get("status") == "blocked" else "unconfirmed",
                              reason=nav.get("reason") or "Target arrival was not confirmed.")
+                break
+        if server_action and len(parts) > 1 and parts[1] == "select":
+            if actor.get("selectedSlot") != int(parts[2]) or actor.get("item") != control.weapon:
+                entry.update(status="unconfirmed", reason="未确认指定武器已选中。")
                 break
         if len(parts) > 1 and parts[1] == "mine":
             mining = (actor or {}).get("mining") or {}
@@ -530,7 +545,9 @@ def _execute_actions(commands, wait, control, actions):
             if parts[1] == "attack":
                 if server_attack:
                     if control.target_hit is None:
-                        entry.update(status="unconfirmed", reason="这次刺击未命中指定傀儡。")
+                        entry.update(status="unconfirmed", reason="这次出招未命中指定目标。")
+                    elif control.target_hit["kind"] == "item-hit":
+                        entry["item_hits"] = [control.target_hit]
                     else:
                         entry["projectile_hit"] = control.target_hit
                     continue
@@ -542,7 +559,7 @@ def _execute_actions(commands, wait, control, actions):
                 entry["item_hits"] = hits
                 if not hits:
                     entry.update(status="unconfirmed", reason="Attack input ended; no corresponding item-hit was observed.")
-    state = control.state if control.target_hit is not None else control.wait(wait)
+    state = control.state if control.target_hit is not None and not control.slime_trial else control.wait(wait)
     return {"ok": all(action["status"] == "completed" for action in actions), "actions": actions, "state": state}
 
 
@@ -629,8 +646,10 @@ def run(args, report, expected=None):
     report.update(goal=goal, initial_state=initial, turns=[], outcome="budget_exhausted")
     control = TaskControl(initial)
     multiplayer = mode == "multiplayer_server"
-    dummy_trial = control.target_slot is not None
-    max_turns = min(args.max_turns, MAX_DUMMY_TURNS) if dummy_trial else args.max_turns
+    combat_trial = control.target_slot is not None
+    max_turns = min(args.max_turns, MAX_SLIME_TURNS if control.slime_trial else MAX_COMBAT_TURNS) if combat_trial else args.max_turns
+    if combat_trial:
+        report["summary"] = "未确认命中指定目标。"
     messages = [
         {"role": "system", "content": (ROOT / ("agent/prompts/multiplayer.md" if multiplayer
                                                    else "agent/prompts/system.md")).read_text(encoding="utf-8")},
@@ -660,8 +679,8 @@ def run(args, report, expected=None):
                 moved = any(action["status"] == "completed" and action["command"].startswith(("/tpa left", "/tpa right"))
                             for past in report["turns"] for tool in past["tools"]
                             for action in tool["result"].get("actions", []))
-                if multiplayer and (dummy_trial or not moved):
-                    report.update(outcome="task_unconfirmed", summary=("未确认命中指定傀儡。" if dummy_trial else
+                if multiplayer and (combat_trial or not moved):
+                    report.update(outcome="task_unconfirmed", summary=(report["summary"] if combat_trial else
                                   "没有可确认的动作结果。"))
                 else:
                     report.update(outcome="model_finished", summary=message.get("content", ""))
@@ -699,21 +718,31 @@ def run(args, report, expected=None):
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(model_result, ensure_ascii=False)})
                 if result.get("outcome") in ("interrupted", "unknown"):
                     report.update(outcome=result["outcome"], error=result["error"],
+                                  summary=result["error"],
                                   interruption=result.get("interruption"),
                                   paused_reason=result.get("paused_reason"),
                                   resume=result.get("resume"), evidence=result.get("evidence"))
                     return
-                if dummy_trial and control.target_hit is not None:
-                    report.update(outcome="goal_succeeded", hit=control.target_hit,
-                                  summary=f"已用铜短剑命中傀儡，造成 {control.target_hit['damage']} 点伤害，已停止出招。")
-                    return
-                if dummy_trial and control.attack_attempts >= MAX_DUMMY_ATTACKS:
-                    report.update(outcome="budget_exhausted", summary="已用完三次攻击尝试，未确认命中傀儡。")
+                if combat_trial and control.target_hit is not None:
+                    hit = control.target_hit
+                    target = "蓝史莱姆" if control.slime_trial else "傀儡"
+                    summary = f"已用{COMBAT_WEAPONS[control.weapon]}命中{target}，造成 {hit['damage']} 点伤害"
+                    report.update(hit=hit, summary=summary + "，退避尚未确认。")
+                    if not control.slime_trial:
+                        report.update(outcome="goal_succeeded", summary=summary + "，已停止出招。")
+                        return
+                    retreat = next((a for a in result.get("actions", []) if a["command"] == "/tpa retreat" and
+                                    a["status"] == "completed"), None)
+                    if retreat:
+                        report.update(outcome="goal_succeeded", retreat=retreat["navigation"], summary=summary + "，已退避。")
+                        return
+                if combat_trial and control.target_hit is None and control.attack_attempts >= MAX_COMBAT_ATTACKS:
+                    report.update(outcome="budget_exhausted", summary="已用完三次攻击尝试，未确认命中指定目标。")
                     return
     except INTERRUPTIONS as exc:
         record = control.recover(exc)
         report.update(outcome="interrupted" if record["kind"] == "cancelled" else "unknown",
-                      error=record["error"], interruption=record["kind"],
+                      error=record["error"], summary=record["error"], interruption=record["kind"],
                       paused_reason=record["paused_reason"],
                       evidence=record["evidence"], resume=record["resume"])
         print(record["error"], flush=True)

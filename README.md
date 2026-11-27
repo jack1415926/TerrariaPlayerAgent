@@ -6,7 +6,7 @@
 
 ## 运行 Demo
 
-需要 Terraria、tModLoader、PowerShell 7、.NET 8 SDK 和 Python 3.12。实测组合为 Terraria 1.4.4.9／tModLoader 2026.9.3.1。游戏路径、独立测试存档和 DeepSeek 配置见 [新机准备](docs/new-machine-setup.md)。
+需要 Terraria、tModLoader、PowerShell 7、.NET 8 SDK 和 Python 3.12。实测组合为 Terraria 1.4.4.9／tModLoader 2026.9.3.1。游戏路径、独立测试存档和 DeepSeek 配置见 [新机准备](docs/agent-setup.md#windows-新机准备与构建)。
 
 在项目目录打包并启动游戏。脚本默认加载项目模组、Cheat Sheet 和 HERO's Mod。
 
@@ -33,10 +33,11 @@
 ## 当前范围
 
 - 多人已验收经典起始装备、固定傀儡的自主铜短剑任务、手动铜短剑／铁阔剑、自然接触受伤／软核重生及一次掉落拾取。
-- Demo 的 Agent 攻击限定为使用已持有的铜短剑打固定傀儡。铁阔剑仍是手动测试夹具，背包换槽、活动敌怪任务、跟随和持久化在后续范围。
+- 背包换装、指定武器攻击傀儡和蓝史莱姆的单次命中后退避已接入，待合并实机验收。武器范围为铜短剑与铁阔剑。角色持久化在后续范围。
+- 地表同行已接入，待实机验收。用 `/tpamp goal 跟随我`、`/tpamp goal 原地等候` 或 `/tpamp goal 回来` 控制；跟随时只在近身且无遮挡时应战。
 - Buff 到期清理已通过本机运行时检查，Host & Play 场景待复测。远程独立服务器和第二真人也有独立待验项。
 
-完整证据与范围见 [集中实测清单](docs/acceptance-checklist.md)。测试操作与离线检查见 [测试入口](docs/testing.md)。
+项目按短任务队友、地表同行、资源成长三个阶段推进。V1 以一次正常装备升级、重进恢复和安全中断为交付条件。阶段状态见 [开发路线](TODO.md#开发阶段与交付)，实测证据见 [集中实测清单](docs/acceptance-checklist.md)，测试步骤见 [测试入口](docs/testing.md)。
 
 ## 代码与文档
 

@@ -138,6 +138,9 @@ public sealed class DemoPlayerSystem : ModSystem
         return true;
     }
 
+    internal bool NavigationActive => navigation.Active;
+    internal bool NavigationFailed => navigation.Failed;
+
     internal bool MoveTo(float? x, int ticks, out string message)
     {
         message = "No living AI, or home requires an activity range first.";
@@ -245,8 +248,11 @@ public sealed class DemoPlayerSystem : ModSystem
     internal void RecordHit(Item item, NPC npc, int damage)
     {
         hitCount++;
-        RecordCombat(new { kind = "item-hit", tick = Main.GameUpdateCount, attacker = Actor!.whoAmI,
-            item = item.type, npc = npc.whoAmI, npcType = npc.type, damage, targetLifeAfter = npc.life });
+        var hit = new { kind = "item-hit", tick = Main.GameUpdateCount, attacker = Actor!.whoAmI,
+            item = item.type, npc = npc.whoAmI, npcType = npc.type, damage, targetLifeAfter = npc.life,
+            attackSequence = AttackSequence };
+        RecordCombat(hit);
+        ModContent.GetInstance<MultiplayerAgentBridge>().ObserveAttackHit(npc, AttackSequence, item.type, damage, hit);
     }
 
     internal void RecordProjectileHit(Projectile projectile, NPC npc, int damage)
@@ -255,12 +261,14 @@ public sealed class DemoPlayerSystem : ModSystem
         hitCount++;
         int? sequence = NativeCombat.ShortswordAttackSequence(projectile);
         // The projectile may outlive the weapon that spawned it; do not claim the current held item is the source.
-        RecordCombat(new { kind = "projectile-hit", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
+        var hit = new { kind = "projectile-hit", tick = Main.GameUpdateCount, attacker = Actor.whoAmI,
             projectileOwner = projectile.owner, projectile = projectile.type,
             attackSequence = sequence,
             heldItemAtHit = Actor.HeldItem.type, npc = npc.whoAmI, npcType = npc.type,
-            damage, targetLifeAfter = npc.life });
-        ModContent.GetInstance<MultiplayerAgentBridge>().ObserveAttackHit(npc, sequence, damage);
+            damage, targetLifeAfter = npc.life };
+        RecordCombat(hit);
+        if (sequence.HasValue)
+            ModContent.GetInstance<MultiplayerAgentBridge>().ObserveAttackHit(npc, sequence.Value, ItemID.CopperShortsword, damage, hit);
     }
 
     internal void RecordAttackStart(int direction, int ticks)

@@ -1,10 +1,49 @@
-# Agent接入与运行
+# 安装、构建与 Agent 运行
 
-更新于 2026-11-27。本文提供 Agent 操作与配置，验收结果见 [集中清单](acceptance-checklist.md)，邮箱和状态口径见 [多人协议](multiplayer-probe.md)。
+更新于 2026-11-27。本文提供 Windows 新机准备、构建与 Agent 操作，验收结果见 [集中清单](acceptance-checklist.md)，邮箱和状态口径见 [多人协议](multiplayer-probe.md)。
 
-## 配置与准备
+## Windows 新机准备与构建
 
-Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.env`的TPA_变量到进程环境，已有进程变量优先；Python只从环境取凭据。`.env`不提交Git，变量名见`.env.example`，报告不含凭据。
+- 安装 Git、PowerShell 7、.NET 8 SDK 和 Python 3.12。`global.json` 选择兼容的 8.0 SDK；Python 宿主使用标准库。
+- 实机需要 Steam 已登录并安装 Terraria、tModLoader、Cheat Sheet 和 HERO's Mod。已验证的组合为 Terraria 1.4.4.9、tML 2026.9.3.1 和 .NET SDK 8.0.428。
+- 独立测试角色和世界使用项目内 `.local/tModLoader`。若需接续旧测试存档，只复制其中的 `Players` 与 `Worlds`；旧电脑角色名与世界名都没有要求。
+
+在 PowerShell 7 中克隆并构建。将示例目录换成实际包含 `tMLMod.targets` 与 `tModLoader.dll` 的安装目录。
+
+```powershell
+git clone https://github.com/jack1415926/TerrariaPlayerAgent.git
+Set-Location TerrariaPlayerAgent
+$tml = 'C:\Program Files (x86)\Steam\steamapps\common\tModLoader'
+.\scripts\build.ps1 -TmlPath $tml
+```
+
+启动时也传入 `-TmlPath $tml`，直接从仓库工作即可。产物位于 `.local/tModLoader/Mods/`。遇到钩子提示找不到原生分支时先核对 tML 版本；构建、占用及日志排查见 [调试说明](debugging.md)。
+
+### 只有源码或无需启动游戏
+
+先用 [离线检查](testing.md#仓库离线检查) 做 Python 与 Mock 工作。C# 构建可用同版本的 tModLoader 发布压缩包。旧版离线构建样本使用 [v2026.08.3.0](https://github.com/tModLoader/tModLoader/releases/tag/v2026.08.3.0)，它只作为该历史构建的依赖，当前实机版本见上文。解压到 `.local/tml/<版本>`，避免打包把游戏文件一并纳入。该压缩包路径只用于编译和打包，实机使用 Steam 安装。
+
+在受限环境可把 .NET 与 NuGet 写路径设在项目内。只有需要隔离用户配置时才额外设置 APPDATA。
+
+```powershell
+$env:DOTNET_CLI_HOME = "$PWD\.local\dotnet-home"
+$env:NUGET_PACKAGES = "$PWD\.local\nuget"
+# 需要隔离用户配置时设置 $env:APPDATA = "$PWD\.local\appdata"
+.\scripts\build.ps1 -TmlPath "$PWD\.local\tml\2026.08.3.0"
+```
+
+GitHub 网络异常时使用本机实际代理；此项目的构建与启动脚本不更改系统代理或 PowerShell 执行策略。只改文档、提示词或 Python 可复用运行中的游戏；C# 改动需要重建和重新加载模组。
+
+## DeepSeek 配置
+
+缺少本地配置时，复制模板后填写自己的 `TPA_API_KEY`。
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
+```
+
+`scripts/run-agent.ps1` 读取本地 `.env` 的 `TPA_` 变量，已有进程变量优先。Python 只从环境读取凭据，变量见 `.env.example`。
 
 | 配置 | 默认值 |
 | --- | --- |
@@ -17,12 +56,12 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 
 这些是当前启动器配置，不代表未来服务状态或计费承诺。网络使用当前进程配置；本机已有通过HTTP_PROXY／HTTPS_PROXY指向Clash的运行记录，不设置全局Git代理。
 
-默认通过 `scripts/play.ps1` 启动独立配置，加载项目模组、Cheat Sheet、HERO's Mod，不另用只加载项目模组的手动启动方式。角色／世界只用专用测试存档，AI退出世界不保存；辅助开关按实际记录。
+`play.ps1` 将项目模组与两个辅助模组启用在独立配置中。AI 退出世界后不保存，验收时记录实际使用的辅助开关。
 
 ## 多人启动与固定傀儡 Demo
 
 ```powershell
-.\scripts\play.ps1 -MultiplayerAgent
+.\scripts\play.ps1 -MultiplayerAgent -TmlPath $tml
 .\scripts\run-agent.ps1 -HostMode -AgentMode multiplayer_server -MaxTurns 6
 ```
 
@@ -36,7 +75,7 @@ Python 3.12标准库，不需额外SDK。`scripts/run-agent.ps1`读取本地`.en
 /tpamp goal 靠近傀儡，用手上的铜短剑打中一次，然后停下告诉我结果
 ```
 
-模型每轮读入最新的结构化位置和动作结果。任务选定最近的已激活傀儡，同层靠近最多 3 秒，使用手上的铜短剑。每目标最多 6 轮模型请求和 3 次攻击尝试。服务器确认本轮刺击命中后停手。主动取消时输入 `/tpamp stop`。
+模型每轮读入最新的结构化位置和动作结果。任务选定最近的已激活傀儡，同层靠近最多 3 秒。每目标最多 6 轮模型请求和 3 次攻击尝试。服务器确认本轮指定武器命中后停手。主动取消时输入 `/tpamp stop`。背包换装及蓝史莱姆任务接入后的操作与验收场景见 [测试说明](testing.md#换装与蓝史莱姆合并验收待实机)。
 
 完成、中断或失败都立即生成 `.local/test-results/goal-<目标ID>.json`，包含每轮发送给模型的观察、工具返回、动作时间窗、失败原因与确认的命中。宿主继续待命时也可读该报告。
 
@@ -111,6 +150,6 @@ stop.json独立优先处理，游戏侧更新stopRevision；Agent等待API、动
 
 ## 已有检查与用量
 
-仓库离线检查、现场验收和报告位置见 [测试入口](testing.md)。单人历史上下文与本轮短 Demo 的用量见 [上下文开销记录](agent-context-cost.md)。
+仓库离线检查、现场验收和报告位置见 [测试入口](testing.md)。单人历史上下文与本轮短 Demo 的用量见 [上下文用量样本](development-experience.md#agent-上下文用量与后续观察)。
 
-历史单人8次请求任务累计153,201 tokens，含缓存及重复历史，不是本轮多人任务用量，也未换算金额。首轮39,505不是当前固定基线；详细口径见 [上下文分析](agent-context-cost.md)。本轮被取消的请求仍可能计费，报告 turns=0 不能证明未发请求。后续按实际任务测量，不以大型记忆系统或框架迁移阻塞玩法。
+报告的 `turns=0` 也可能出现在请求已发出却在响应返回前取消的情况。

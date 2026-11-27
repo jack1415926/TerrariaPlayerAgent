@@ -1016,7 +1016,8 @@ class MultiplayerHostTests(unittest.TestCase):
             {'id': 'call', 'function': {'name': 'game_actions', 'arguments': json.dumps({'commands': [command]})}}]}}]}
 
     def prepare_dummy(self):
-        self.game.state.update(attackTargetSlot=103, attackTarget={'slot': 103, 'dx': 65, 'dy': 0, 'distancePixels': 65})
+        self.game.state.update(attackWeapon=3507, attackTargetSlot=103,
+                               attackTarget={'slot': 103, 'dx': 65, 'dy': 0, 'distancePixels': 65})
         self.game.state['actor'].update(item=3507, attackSequence=0)
         self.args.max_turns = 10
         self.post_goal(text='靠近傀儡，用手上的铜短剑打中一次', attackTargetSlot=103)
@@ -1043,6 +1044,7 @@ class MultiplayerHostTests(unittest.TestCase):
                                  attackSequence=0 if sequence == 1 else sequence, damage=5)
                     actor['combatEvents'] = reply['state']['actor']['combatEvents'] = [event]
                     if sequence == 2:
+                        self.game.state['attackHit'] = reply['state']['attackHit'] = event
                         actor['attackTicks'] = reply['state']['actor']['attackTicks'] = 0
             return reply
 
@@ -1068,6 +1070,41 @@ class MultiplayerHostTests(unittest.TestCase):
         self.assertEqual(detailed['final_state']['actor']['attackTicks'], 0)
         self.assertIn('reason', detailed['turns'][0]['tools'][0]['result']['actions'][0])
         self.assertEqual(detailed['turns'][2]['observation'], observations[2])
+
+    def test_select_iron_then_hit_slime_and_retreat_after_killing_blow(self):
+        self.prepare_dummy()
+        state = self.game.state
+        state.update(attackWeapon=4, attackTargetKind='slime')
+        state['attackTarget']['dx'] = 24
+        actor = state['actor']
+        actor.update(selectedSlot=0, inventory=[{'slot': 0, 'type': 3507}, {'slot': 3, 'type': 4}])
+        commands = iter(('/tpa select 3', '/tpa attack right 1', '/tpa retreat'))
+
+        def game(command, expected_revision=None, context=None):
+            if command == '/tpa select 3':
+                actor.update(item=4, selectedSlot=3)
+            if command == '/tpa retreat':
+                actor.update(x=52, velocityX=0, navigation={'sequence': 1, 'status': 'arrived', 'targetX': 52})
+            reply = self.request(command, expected_revision, context)
+            if command.startswith('/tpa attack'):
+                actor['attackSequence'] = reply['state']['actor']['attackSequence'] = 1
+            elif command == 'status' and actor['attackTicks']:
+                hit = dict(kind='item-hit', item=4, damage=12, attacker=1, attackSequence=1,
+                           npc=103, targetLifeAfter=0, tick=state['tick'])
+                state['attackHit'] = reply['state']['attackHit'] = hit
+                state['attackTarget'] = reply['state']['attackTarget'] = None
+                actor['attackTicks'] = reply['state']['actor']['attackTicks'] = 0
+            return reply
+
+        report = {}
+        with patch.object(agent, 'game_request', side_effect=game), patch.object(agent.time, 'sleep'), \
+                patch.object(agent, 'chat', side_effect=lambda *args: self.action_reply(next(commands))):
+            agent.host_tick(self.args, report, set())
+        result = self.wait_for('goal-result-g1.json')
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertIn('铁阔剑', result['summary'])
+        self.assertIn('已退避', result['summary'])
+        self.assertEqual([a['status'] for a in report['goals'][0]['actions']], ['completed'] * 3)
 
     def test_stop_during_dummy_attack_exits_without_another_attempt(self):
         self.prepare_dummy()

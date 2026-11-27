@@ -73,7 +73,7 @@ left/right不填时长默认2秒，允许大于0、最多10秒，小数用英文
 
 确认输入法处于英文状态。方向键/WASD和空格仍只控制真人，AI不会持续跟随。已设活动范围时可用home尝试主动返回既定起点；没有设置时人工走近查看。remove重建会丢失当前AI背包和状态，不作为常规找回办法。
 
-停止后再次 status 应显示 moveTicks=0、jumpTicks=0。按 manual-tests.md 完成其余检查。
+停止后再次 status 应显示 moveTicks=0、jumpTicks=0。按 [早期人工验收](milestone-acceptance.md#2026-10-21-人工验收清单) 完成其余检查。
 
 ## 4. 日志和常见问题
 

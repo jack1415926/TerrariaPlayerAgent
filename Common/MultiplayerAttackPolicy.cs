@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace TerrariaPlayerAgent.Common;
 
 // Bounded manual multiplayer attack input. Kept Terraria-free so the offline self-check can run it.
@@ -9,11 +11,26 @@ internal static class MultiplayerAttackPolicy
     internal static bool IsSupportedAttackItem(int heldItemType) =>
         heldItemType is StartingKit.CopperShortsword or IronBroadsword;
 
-    internal static string? ValidateDummyGoal(string text, int heldItemType)
+    internal static int ResolveGoalWeapon(string text, int heldItemType)
     {
-        if (text.Contains("铁阔剑") || text.Contains("铜阔剑") || text.Contains("换武器"))
-            return "当前傀儡目标仅支持使用已持有的铜短剑，换武器和阔剑目标暂未开放。";
-        return heldItemType == StartingKit.CopperShortsword ? null : "请让 AI 先持有铜短剑，再提交傀儡攻击目标。";
+        bool copper = text.Contains("铜短剑");
+        bool iron = text.Contains("铁阔剑");
+        if (copper && iron) return 0;
+        string remaining = text.Replace("铜短剑", "").Replace("铁阔剑", "");
+        if (Regex.IsMatch(remaining, @"(?:短剑|阔剑|木剑|弓|枪|魔杖|法杖|镐|斧)|(?:不要|别|不用)\s*(?:使用|用|换)") ||
+            (!copper && !iron && text.Contains("换")))
+            return 0;
+        // A weapon constraint must be understood before an attack can be credited.
+        foreach (Match match in Regex.Matches(text, @"(?:切换(?:到|成)?|换(?:到|成|上)?|装备|使用|用)\s*(?:背包里[的]?\s*)?(?:手上[的]?|当前[的]?)?\s*([^\s，,。；;、]+)"))
+        {
+            string argument = match.Groups[1].Value;
+            if (!argument.StartsWith("铜短剑") && !argument.StartsWith("铁阔剑") &&
+                !argument.StartsWith("武器打") && !argument.StartsWith("武器攻击"))
+                return 0;
+            if (match.Value.StartsWith("换") && argument.StartsWith("武器")) return 0;
+        }
+        int type = copper ? StartingKit.CopperShortsword : iron ? IronBroadsword : heldItemType;
+        return IsSupportedAttackItem(type) ? type : 0;
     }
 
     internal static bool TryParseCommand(string[] args, out string action, out int seconds)
